@@ -120,7 +120,17 @@ Färger: `green/grön` #1f5c3a, `teal` #175a5f, `blue/blå` #1f4a80,
 `magenta/rosa` #7a2a5c, `gray/grå` #3a4250, en egen färg `#rrggbb`, eller ett
 xterm-256-index 0–255. Paletten är lugn och mörk (minst 7,5:1 kontrast mot vit fliktext). Den aktiva
 fliken visar färgen fullt ut och ser därför ljusare ut än de inaktiva, men ringen syns ändå.
-Ändra färgerna i `Palette` i `TabSignal.cs` och kör `.uild.ps1`. Använd inte `wt --tabColor`:
+Ändra färgerna i `Palette` i `TabSignal.cs` och kör `.uild.ps1`.
+
+Textfärgen på fliken väljer Windows Terminal själv: svart om flikfärgen lagd över
+flikraden är ljus, annars vit. Med Windows i ljust läge är flikraden ljus, och då
+får inaktiva flikar svart text medan aktiva och hovrade får vit. Därför sätter
+`install.ps1` ett eget mörkt tema (`"theme": "TabSignal"`, mörk flikrad `#1c1c1c`
+med och utan fokus). Med paletten ovan blir texten då vit i alla lägen. Temat
+gäller bara ramen, inte terminalens färgschema eller Claude.
+
+`TabSignal.exe recolor` skickar färgen igen till alla öppna Claude-flikar (senast
+satta färg, annars färgen ur sessionsnamnet), till exempel efter byte av palett. Använd inte `wt --tabColor`:
 en flik som startats så kan inte färgas om med escape-sekvenser.
 
 ### Duplicera flik
@@ -143,7 +153,7 @@ TabSignal.exe color none
 
 ## Windows Terminal-inställningar som satts
 
-I `profiles.defaults`: `"bellStyle": ["window", "taskbar"]` (ingen ljudklocka),
+Temat `TabSignal` (se ovan) och i `profiles.defaults`: `"bellStyle": ["window", "taskbar"]` (ingen ljudklocka),
 `"startingDirectory": "C:\\"` (nya flikar börjar i projektroten) och
 `"icon": "C:\\TabSignal\\blank.png"` (genomskinlig profilikon, även satt på
 profilen Windows PowerShell som annars har en egen ikon). Ikonen syns bara när

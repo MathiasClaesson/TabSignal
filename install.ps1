@@ -130,6 +130,19 @@ if (-not $Uninstall) {
         foreach ($p in @($wt.profiles.list | Where-Object { $_.guid -eq '{61c54bbd-c2c6-5271-96e7-009a87ff44bf}' })) {
             $p.PSObject.Properties.Remove('icon'); $p | Add-Member -NotePropertyName icon -NotePropertyValue $icon
         }
+        # Morkt tema med fast flikrad: Windows Terminal valjer textfarg utifran flikfargen lagd
+        # over flikraden. Med en ljus rad (Windows i ljust lage) blir texten svart pa inaktiva
+        # flikar och vit pa aktiva/hover; med en mork rad blir den vit i alla lagen.
+        $theme = [pscustomobject]@{
+            name   = 'TabSignal'
+            window = [pscustomobject]@{ applicationTheme = 'dark' }
+            tabRow = [pscustomobject]@{ background = '#1c1c1c'; unfocusedBackground = '#1c1c1c' }
+        }
+        $themes = @($wt.themes | Where-Object { $_ -and $_.name -ne 'TabSignal' }) + $theme
+        foreach ($kv in @(@('themes', $themes), @('theme', 'TabSignal'))) {
+            $wt.PSObject.Properties.Remove($kv[0])
+            $wt | Add-Member -NotePropertyName $kv[0] -NotePropertyValue $kv[1]
+        }
         Copy-Item -LiteralPath $wtFile -Destination ($wtFile + '.bak-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
         $wtJson = $wt | ConvertTo-Json -Depth 32
         $null = $wtJson | ConvertFrom-Json

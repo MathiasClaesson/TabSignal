@@ -15,6 +15,7 @@
 //   TabSignal.exe hook [--matcher NAMN] [--bell] [--log FIL]   (laser hook-JSON fran stdin)
 //   TabSignal.exe title "text"                              (satt titeln nu)
 //   TabSignal.exe color <farg|#rrggbb|0-255|none> | color --for "namn"
+//   TabSignal.exe recolor                                   (fargar om alla Claude-flikar)
 //   TabSignal.exe set <state 0-4> [progress] | clear        (ringen manuellt)
 //   TabSignal.exe bell | raw <sekvens>
 
@@ -236,6 +237,53 @@ static class TabSignal
         return null;
     }
 
+    // Senast satta flikfarg per flik (skalets pid), sa att recolor kan skicka den igen.
+    static string ColorStore()
+    {
+        string d = Path.Combine(Path.GetTempPath(), "TabSignal", "colors");
+        Directory.CreateDirectory(d);
+        return d;
+    }
+
+    static void SaveColor(uint shell, string seq)
+    {
+        if (shell == 0 || shell == ATTACH_PARENT_PROCESS) return;
+        string f = Path.Combine(ColorStore(), shell.ToString());
+        if (seq.StartsWith(ESC + "[2;0;0,|")) File.Delete(f);
+        else File.WriteAllText(f, seq);
+    }
+
+    // Fargar om alla oppna flikar dar Claude kor: sparad farg om den finns, annars
+    // automatisk farg ur sessionsnamnet. Anvands efter byte av palett eller WT-tema.
+    static int Recolor()
+    {
+        var map = Snapshot();
+        var done = new HashSet<uint>();
+        foreach (var kv in map)
+        {
+            if (!kv.Value.Name.StartsWith("claude", StringComparison.OrdinalIgnoreCase)) continue;
+            uint shell = 0, pid = kv.Key;
+            for (int depth = 0; depth < 32; depth++)
+            {
+                Proc p, parent;
+                if (!map.TryGetValue(pid, out p) || p.Parent == 0 || !map.TryGetValue(p.Parent, out parent)) break;
+                if (string.Equals(parent.Name, "WindowsTerminal.exe", StringComparison.OrdinalIgnoreCase)) { shell = pid; break; }
+                pid = p.Parent;
+            }
+            if (shell == 0 || !done.Add(shell)) continue;
+            string f = Path.Combine(ColorStore(), shell.ToString());
+            string seq = File.Exists(f) ? File.ReadAllText(f) : RgbSeq(HexFor(SessionName(kv.Key, null)));
+            bool ok = SendTo(shell, seq);
+            Console.Out.WriteLine((ok ? "fargad  " : "missade ") + shell + "  " + SessionName(kv.Key, null));
+        }
+        foreach (string f in Directory.GetFiles(ColorStore()))
+        {
+            uint id; Proc p;
+            if (!uint.TryParse(Path.GetFileName(f), out id) || !map.TryGetValue(id, out p)) File.Delete(f);   // stangda flikar
+        }
+        return 0;
+    }
+
     static string PaletteHelp()
     {
         var sb = new StringBuilder();
@@ -330,9 +378,16 @@ static class TabSignal
                 case "color":
                     seq = ColorSeq(rest.Count > 1 ? rest[1] : null, forName);
                     if (seq == null) { Console.Error.WriteLine("Farger: " + PaletteHelp() + " | #rrggbb | 0-255 | none  (eller --for \"arbetsnamn\")"); return 1; }
-                    break;
+                    {
+                        uint t = FindTarget();
+                        SendTo(t, seq);
+                        try { SaveColor(t, seq); } catch (Exception ex) { Log("save color: " + ex.Message); }
+                    }
+                    return 0;
+                case "recolor":
+                    return Recolor();
                 default:
-                    Console.Error.WriteLine("Usage: TabSignal.exe hook [--matcher NAME] | title <text> | color <farg|#rrggbb|0-255|none> | color --for <namn> | set <0-4> [0-100] | clear | bell | raw <sekvens>");
+                    Console.Error.WriteLine("Usage: TabSignal.exe hook [--matcher NAME] | title <text> | color <farg|#rrggbb|0-255|none> | color --for <namn> | recolor | set <0-4> [0-100] | clear | bell | raw <sekvens>");
                     return 0;
             }
             if (seq != null) Send(seq);
