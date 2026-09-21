@@ -1,176 +1,307 @@
 # TabSignal
 
-Visar Claude Code-sessionens status direkt i Windows Terminal-fliken, och startar
-sessioner med projektmapp, namn och flikfärg. Fristående, ingen server.
+[![CI](https://github.com/MathiasClaesson/TabSignal/actions/workflows/ci.yml/badge.svg)](https://github.com/MathiasClaesson/TabSignal/actions/workflows/ci.yml)
 
-## Vad du ser i fliken
+Shows the state of a [Claude Code](https://claude.com/claude-code) session in the
+Windows Terminal tab, and starts sessions with a project directory, a name and a
+tab color. Self-contained: no server, no dependencies, one small `.exe` built from
+a single C# file.
 
-Statusen är Windows Terminals progressring i flikens ikonplats:
+Windows + Windows Terminal only.
 
-| Läge                                                        | Fliken            |
-|-------------------------------------------------------------|-------------------|
-| Claude arbetar (även under långa kommandon)                 | ringen snurrar    |
-| Claude behöver dig: klar, vill ha tillstånd, ställer fråga  | stilla ring       |
-| Ny eller avslutad session                                   | ingen ring        |
+## What you see in the tab
 
-Ringens form och färg är Windows Terminals egna (systemets accentfärg) och går
-inte att ändra. Ikonplatsen kan bara visa profilikonen eller den här ringen, så
-ringen är det enda i ikonplatsen som kan följa sessionen. Claude Codes inbyggda
-progressring är avstängd i `~/.claude.json` (`terminalProgressBarEnabled: false`)
-så att den inte stör.
+The state is Windows Terminal's progress ring, drawn in the tab's icon slot:
 
-Fliktiteln är bara sessionsnamnet. `tab` öppnar sessionen i en flik med fast titel
-(`wt --title --suppressApplicationTitle`), så Claude Codes egen glyf (◐/◑ när den
-jobbar, ✳ när den är klar) syns inte. Priset är att `/rename` inte slår igenom i
-fliken. `tab -Here` startar i stället i den flik du står i. Claude Codes titelglyf är
-dessutom avstängd överallt med `"env": { "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1" }`
-i `~/.claude/settings.json`, så även `tab -Here` och vanliga `claude` visar bara namnet.
+| State                                                              | The tab        |
+|--------------------------------------------------------------------|----------------|
+| Claude is working (including during long-running commands)          | spinning ring  |
+| Claude needs you: done, asking permission, asking a question        | steady ring    |
+| A new or ended session                                              | no ring        |
 
-Ingen klocka (BEL) skickas som standard. `.\install.ps1 -Bell` lägger till en
-klocka när Claude behöver dig (klocksymbol i fliken, blink enligt `bellStyle`).
+The ring's shape and color are Windows Terminal's own (the system accent color)
+and cannot be changed. The icon slot can show either the profile icon or this
+ring, so the ring is the only thing in that slot that can follow the session.
+Claude Code's built-in progress ring is switched off in `~/.claude.json`
+(`terminalProgressBarEnabled: false`) so that the two do not fight.
 
-Flikens *färg* är en egen RGB-färg per flik, se nedan. Terminalens färgschema och
-Claude Codes tema påverkas inte.
+The tab title is just the session name. Claude Code's own title glyphs (the
+working spinner, the done marker) are disabled via
+`"env": { "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1" }` in `~/.claude/settings.json`,
+so a session started with `tab`, and a plain `claude` too, shows only the name.
+With `tab -NewTab` the new tab gets a title that is fixed by Windows Terminal
+itself (`wt --title --suppressApplicationTitle`); the price is that `/rename`
+does not show up in the tab.
 
-## Hur det fungerar
+No bell (BEL) is sent by default. `.\install.ps1 -Bell` adds one when Claude needs
+you (bell glyph in the tab, flash according to `bellStyle`).
 
-Claude Code kör hooks som underprocesser utan egen synlig konsol. `TabSignal.exe`
-går uppåt i processträdet till skalet som äger fliken, kopplar sig på dess konsol
-(`AttachConsole`) och skriver sekvenserna direkt till `CONOUT$`:
+The tab *color* is a separate per-tab RGB color, see below. The terminal's color
+scheme and Claude Code's theme are not affected.
 
-- `ESC ] 9 ; 4 ; state ; progress BEL` (OSC 9;4, progressringen: 3 = snurrar, 1;100 = stilla, 0 = dold)
-- `ESC ] 4 ; 17 ; rgb:rr/gg/bb BEL` + `ESC [ 2 ; 15 ; 17 , |` (flikfärg: OSC 4 definierar om
-  index 17 i just den flikens färgtabell, DECAC pekar fliken på det. Index 17 används
-  varken av färgschemat (0–15) eller av Claude Code, som ritar i truecolor)
-- `ESC ] 2 ; titel BEL` (OSC 2, fliktitel, bara manuellt via `title`)
+## How it works
 
-Hooks: UserPromptSubmit ger snurr; Stop, PermissionRequest, AskUserQuestion och
-Notification (tillstånd, fråga, idle) ger stilla ring; SessionStart och
-SessionEnd döljer ringen. Fungerar oavsett skal i fliken (PowerShell, cmd,
-Git Bash testade), eftersom hooken alltid går upp till processen direkt under
-WindowsTerminal.exe.
+Claude Code runs hooks as subprocesses with no console of their own.
+`TabSignal.exe` walks up the process tree to the shell that owns the tab, attaches
+to its console (`AttachConsole`) and writes the sequences straight to `CONOUT$`:
 
-## Installation
+- `ESC ] 9 ; 4 ; state ; progress BEL` — OSC 9;4, the progress ring
+  (3 = spinning, 1;100 = steady, 0 = hidden)
+- `ESC ] 4 ; 17 ; rgb:rr/gg/bb BEL` + `ESC [ 2 ; 15 ; 17 , |` — the tab color.
+  OSC 4 redefines index 17 in that one tab's color table, and DECAC points the tab
+  at it. Index 17 is used neither by the color scheme (0–15) nor by Claude Code,
+  which draws in truecolor.
+- `ESC ] 2 ; title BEL` — OSC 2, the tab title (only set manually, via `title`)
+- `ESC ] 9 ; 9 ; "path" ESC \` — OSC 9;9, the current directory, so that
+  "Duplicate tab" opens in the same place
+
+Hooks: `UserPromptSubmit` starts the spin; `Stop`, `PermissionRequest`,
+`AskUserQuestion` and `Notification` (permission, question, idle) give the steady
+ring; `SessionStart` and `SessionEnd` hide it. This works whatever shell runs in
+the tab (PowerShell, cmd and Git Bash are tested), because the hook always walks
+up to the process directly below `WindowsTerminal.exe`.
+
+## Install
+
+Clone anywhere you like — nothing in the code assumes a particular location.
 
 ```powershell
-cd C:\TabSignal
-.\install.ps1            # bygger exe + registrerar hooks i ~/.claude/settings.json
-.\install.ps1 -Bell      # samma, men med klocka (BEL)
-.\install.ps1 -Uninstall # tar bort hooks igen
+git clone https://github.com/MathiasClaesson/TabSignal.git
+cd TabSignal
+.\install.ps1              # builds the exe + registers the hooks
+.\install.ps1 -Bell        # same, but with a bell (BEL)
+.\install.ps1 -Uninstall   # removes the hooks again
 ```
 
-`install.ps1` gör allt som behövs på en ny dator (kör det igen efter varje ändring,
-det är idempotent):
+If PowerShell blocks the script, run it as
+`powershell -ExecutionPolicy Bypass -File .\install.ps1`.
 
-- bygger `TabSignal.exe` och registrerar hooks i `~/.claude/settings.json`
-- sätter `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` där (ingen ✳/◐ i fliken)
-- stänger av Claude Codes egen progressring i `~/.claude.json`
-- lägger till `tab` och prompt-funktionen i PowerShell-profilen
-- lägger mappen på användarens PATH
-- sätter Windows Terminal-inställningarna nedan (hoppas över med en varning om
-  filen innehåller kommentarer, sätt dem då för hand)
+`install.ps1` does everything needed on a fresh machine, and is idempotent — run
+it again after every change:
 
-`-Uninstall` tar bort hooks, titelinställningen och `tab`, och slår på
-progressringen igen. PATH och Windows Terminal-inställningarna lämnas kvar.
-Backup (`.bak-datum`) tas av varje fil som ändras.
+- builds `TabSignal.exe` and registers the hooks in `~/.claude/settings.json`
+- sets `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` there
+- turns off Claude Code's own progress ring in `~/.claude.json`
+- adds the `tab` function and a `prompt` function to your PowerShell profile
+- puts the repo folder on your user PATH
+- applies the Windows Terminal settings listed below (skipped with a warning if
+  that file contains comments — set them by hand in that case)
 
-Kräver bara Windows (kompilatorn `csc.exe` följer med .NET Framework) och
-Windows Terminal 1.6 eller senare. Kör installationen när ingen Claude-session är
-igång, eftersom Claude Code själv skriver till `~/.claude.json`.
+Options:
 
-### Flytta till en annan dator
+| Flag | Effect |
+|------|--------|
+| `-Bell` | send BEL when Claude needs you |
+| `-StartingDirectory <path>` | also point new Windows Terminal tabs at `<path>` |
+| `-SkipTerminalSettings` | leave `settings.json` for Windows Terminal alone |
+| `-SkipPath` | do not touch your user PATH |
+| `-SkipBuild` | skip the build step |
+| `-Uninstall` | remove hooks, the title setting and the `tab` function, and re-enable Claude Code's ring |
 
-Lägg mappen på samma plats (`C:\TabSignal`) och kör:
+PATH and the Windows Terminal settings are left in place by `-Uninstall`. A backup
+(`.bak-<timestamp>`) is taken of every file that actually changes; a re-run that
+would produce identical content rewrites nothing, so backups do not pile up.
+
+Hooks you added yourself are never removed, including one sitting in the same
+entry as a TabSignal hook. If your profile already defines a `prompt` function
+(oh-my-posh, posh-git, your own), TabSignal leaves it alone and says so —
+"Duplicate tab" then still opens in the session's directory inside Claude, just
+not in a plain shell.
+
+`-SettingsPath`, `-ClaudeJsonPath` and `-ProfilePath` override the files the
+installer writes to; the tests use them to run a full install against a temp
+directory.
+
+Requirements: Windows (the compiler `csc.exe` ships with .NET Framework 4.x — no
+SDK needed) and Windows Terminal 1.6 or later. Run the install while no Claude
+session is running, since Claude Code writes to `~/.claude.json` itself.
+
+## Starting a session: `tab`
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File C:\TabSignal\install.ps1
+tab                          # project list -> session name -> color
+tab "Name"                   # skips the name prompt
+tab "Name" -Color teal       # a chosen color
+tab "Name" -Color none       # no tab color
+tab -Dir C:\proj             # skips the project list
+tab -NewTab                  # open the session in a new tab instead
+tab -KeepTab                 # with -NewTab: leave the tab you ran tab in open
+tab -Args "--resume"         # extra arguments for claude (split on whitespace)
 ```
 
-Öppna sedan en ny flik. `projects.txt` följer inte med (den är per dator) och
-skapas vid första `tab`.
+The flow: pick a project by number (0 = the current directory), enter a session
+name (Enter gives the directory name), pick a color (Enter gives an automatic
+color derived from the name — the same name always gives the same color; `none`
+gives no color). The session then takes over the tab you are standing in: the
+directory, the title and the color are set there and claude starts. It runs as
+`claude --name "Name"`, so the name shows up in the `--resume` list too.
 
-## Starta en session: `tab`
+Nothing is opened and nothing is closed, so no window can be lost on the way.
+`tab` is a PowerShell function in your profile (added by `install.ps1`); from cmd,
+`tab.cmd` works as well.
 
-```powershell
-tab                          # projektlista -> sessionsnamn -> färg
-tab "Namn"                   # hoppar över namnfrågan
-tab "Namn" -Color teal       # vald färg
-tab "Namn" -Color none       # ingen flikfärg
-tab -Dir C:\proj             # hoppar över projektlistan
-tab -Here                    # starta i fliken du står i
-tab -Args "--resume"         # extra argument till claude
+#### `-NewTab`
+
+`tab -NewTab` opens the session in a new tab instead and closes the tab you ran
+`tab` in — which only works when `tab` runs as the profile function, since it is
+the dot-sourced script that can close the shell. The closing is guarded, because
+closing the last tab in a window closes the window with it. The new tab reports
+in through a marker file under `%TEMP%\TabSignal\ready` and writes the Windows
+Terminal window it ended up in (the process id of its `WindowsTerminal.exe`, one
+per window) into it; the old tab closes only if that is the same window it is in
+itself. Otherwise it stays open with a line saying why: the new tab never came up
+(`wt.exe` missing, or a cold start longer than 15 seconds), `wt.exe` put the
+session in another window, or `tab` was not run in a Windows Terminal tab at all.
+`-KeepTab` skips the handshake and keeps the tab you started from.
+
+### The project list
+
+`projects.txt` next to the script: one directory per line, an optional
+`| Display name` after the path, `#` for a comment. It is yours to edit and is
+not tracked by git.
+
+```
+C:\code\my-repo | My repo
+C:\code\another
 ```
 
-Flödet: välj projekt med en siffra (0 = aktuell mapp), ange sessionsnamn (Enter
-ger mappnamnet), välj färg (Enter ger automatisk färg härledd ur namnet, samma
-namn ger alltid samma färg, `none` ger ingen färg). Sessionen öppnas sedan i en
-ny flik med fast titel, och fliken du körde `tab` i stängs. Sessionen körs som
-`claude --name "Namn"`, så namnet syns även i `--resume`-listan.
+If the file is missing it is generated by scanning for directories containing
+`.git`, `.claude` or `CLAUDE.md`, two levels deep. Two environment variables
+control this:
 
-`tab` är en PowerShell-funktion i din profil (`install.ps1` lägger dit den) som
-dot-sourcar `tab.ps1`; det är därför fliken kan stängas. Från cmd fungerar
-`tab.cmd` också, men då stängs inte den gamla fliken.
+- `TABSIGNAL_PROJECTS` — use a different projects file
+- `TABSIGNAL_PROJECT_ROOTS` — `;`-separated roots to scan
+  (default: the system drive root and your home directory)
 
-Projektlistan är `C:\TabSignal\projects.txt`, en mapp per rad, valfritt
-`| Visningsnamn` efter sökvägen, `#` för kommentar. Saknas filen skapas den från
-mappar direkt under `C:\` som innehåller `.git`, `.claude` eller `CLAUDE.md`.
+### Colors
 
-Färger: `green/grön` #1f5c3a, `teal` #175a5f, `blue/blå` #1f4a80,
-`purple/lila` #4a3582, `red/röd` #7a2530, `orange` #8a3e14, `brown/brun` #5e4520,
-`magenta/rosa` #7a2a5c, `gray/grå` #3a4250, en egen färg `#rrggbb`, eller ett
-xterm-256-index 0–255. Paletten är lugn och mörk (minst 7,5:1 kontrast mot vit fliktext). Den aktiva
-fliken visar färgen fullt ut och ser därför ljusare ut än de inaktiva, men ringen syns ändå.
-Ändra färgerna i `Palette` i `TabSignal.cs` och kör `.uild.ps1`.
+`green` `#1f5c3a`, `teal` `#175a5f`, `blue` `#1f4a80`, `purple` `#4a3582`,
+`red` `#7a2530`, `orange` `#8a3e14`, `brown` `#5e4520`, `magenta` `#7a2a5c`,
+`gray` `#3a4250` — or your own `#rrggbb`, or an xterm-256 index `0`–`255`.
 
-Textfärgen på fliken väljer Windows Terminal själv: svart om flikfärgen lagd över
-flikraden är ljus, annars vit. Med Windows i ljust läge är flikraden ljus, och då
-får inaktiva flikar svart text medan aktiva och hovrade får vit. Därför sätter
-`install.ps1` ett eget mörkt tema (`"theme": "TabSignal"`, mörk flikrad `#1c1c1c`
-med och utan fokus). Med paletten ovan blir texten då vit i alla lägen. Temat
-gäller bara ramen, inte terminalens färgschema eller Claude.
+In `tab` the color is picked from a numbered menu where each row shows its color
+as a swatch. `TabSignal.exe colors [--for <name>]` prints the palette as
+`number|name|rrggbb` — that is what the menu is built from, so the palette is
+defined in exactly one place, `Palette` in `TabSignal.cs`. Edit it there and run
+`.\build.ps1`.
 
-`TabSignal.exe recolor` skickar färgen igen till alla öppna Claude-flikar (senast
-satta färg, annars färgen ur sessionsnamnet), till exempel efter byte av palett. Använd inte `wt --tabColor`:
-en flik som startats så kan inte färgas om med escape-sekvenser.
+The palette is deliberately dark and quiet (at least 7.5:1 contrast against white
+tab text). The active tab shows its color at full strength and therefore looks
+lighter than the inactive ones, but the ring is still visible. `gray` is never
+picked automatically, so it means "I chose this myself".
 
-### Duplicera flik
+Windows Terminal picks the tab text color itself: black if the tab color
+composited over the tab row is light, white otherwise. With Windows in light mode
+the tab row is light, so inactive tabs get black text while active and hovered
+ones get white. That is why `install.ps1` installs a dark theme of its own
+(`"theme": "TabSignal"`, tab row `#1c1c1c` both focused and unfocused); with the
+palette above the text is then white in every state. The theme only affects the
+window frame, not the terminal color scheme or Claude.
 
-Högerklick på fliken, "Duplicera flik" (eller Ctrl+Shift+D) öppnar en ny flik i
-**samma mapp**: TabSignal talar om sessionens mapp för Windows Terminal med
-sekvensen OSC 9;9 vid varje hook-händelse, `tab` gör det vid start, och
-prompt-funktionen i PowerShell-profilen gör det i vanliga skal. Färg och fast
-titel följer däremot inte med, Windows Terminal kopierar bara profil och mapp.
-Kör `tab` i den nya fliken: Enter på projektfrågan tar den aktuella mappen, Enter
-på namnet ger mappnamnet, och samma namn ger samma färg.
+`TabSignal.exe recolor` re-sends the color to every open Claude tab (the color last
+set, otherwise the one derived from the session name) — useful after editing the
+palette. Do not use `wt --tabColor`: a tab started that way cannot be recolored
+with escape sequences afterwards.
 
-Byt färg mitt i en session (från Claude-prompten med `!` framför):
+Change color mid-session (from the Claude prompt, prefixed with `!`):
 
 ```powershell
-TabSignal.exe color lila
+TabSignal.exe color purple
 TabSignal.exe color "#3a7ca5"
 TabSignal.exe color none
 ```
 
-## Windows Terminal-inställningar som satts
+### Duplicate tab
 
-Temat `TabSignal` (se ovan) och i `profiles.defaults`: `"bellStyle": ["window", "taskbar"]` (ingen ljudklocka),
-`"startingDirectory": "C:\\"` (nya flikar börjar i projektroten) och
-`"icon": "C:\\TabSignal\\blank.png"` (genomskinlig profilikon, även satt på
-profilen Windows PowerShell som annars har en egen ikon). Ikonen syns bara när
-ringen är dold, dvs i nya flikar utan session. Ta bort de två `icon`-raderna om
-du vill ha PowerShell-ikonen tillbaka. `"icon": "none"` fungerar inte, det ger
-Windows Terminals reservikon. Ikonen är fast per profil och kan inte växla per
-flik. Ändringar slår igenom några sekunder efter att filen sparats.
+Right-click the tab → "Duplicate tab" (or Ctrl+Shift+D) opens a new tab in the
+**same directory**: TabSignal reports the session's directory to Windows Terminal
+with OSC 9;9 on every hook event, `tab` does it at startup, and the `prompt`
+function does it in ordinary shells. Color and fixed title do not carry over —
+Windows Terminal only copies the profile and the directory. Run `tab` in the new
+tab: Enter on the project prompt takes the current directory, Enter on the name
+gives the directory name, and the same name gives the same color.
 
-## Manuell test
+## Windows Terminal settings that get applied
+
+The `TabSignal` theme (above), and in `profiles.defaults`:
+
+- `"bellStyle": ["window", "taskbar"]` — flash, no sound
+- `"icon": "<repo>\\blank.png"` — a transparent profile icon, also set on the
+  Windows PowerShell profile, which otherwise carries its own icon. The icon is
+  only visible when the ring is hidden, i.e. in new tabs with no session. Remove
+  the two `icon` lines to get the PowerShell icon back; `"icon": "none"` does not
+  work, it gives Windows Terminal's fallback icon. The icon is per profile and
+  cannot vary per tab.
+- `"startingDirectory"` — only when you pass `-StartingDirectory`
+
+Changes take effect a few seconds after the file is saved.
+
+## Tests
 
 ```powershell
-TabSignal.exe set 3            # ringen snurrar
-TabSignal.exe set 1 100        # stilla ring
-TabSignal.exe clear            # ingen ring
-TabSignal.exe color orange
-TabSignal.exe title "Test"     # fliktitel (ignoreras i flikar med fast titel)
+.\test.ps1
 ```
 
-Felsökning: sätt `TABSIGNAL_LOG=C:\TabSignal\tabsignal.log` (eller `--log FIL`)
-så loggas processkedja och skickade sekvenser.
+Two suites, both run on every push and pull request via GitHub Actions:
+
+- **`tests/TabSignalTests.cs`** — the pure logic. Compiled together with
+  `TabSignal.cs` into a separate test executable (`csc /main:`), so the shipped
+  `TabSignal.exe` contains no test code. Covers which hook event produces which
+  ring state (including that unknown events and non-`AskUserQuestion` tools leave
+  the ring alone), how a color spec becomes an escape sequence, the automatic
+  color derived from a session name, the clamping in `Progress`, the JSON field
+  extraction, and the sanitizing of a path before it goes into OSC 9;9.
+- **`tests/Install.Tests.ps1`** — a full install / re-install / uninstall round
+  trip driven against a temp directory via `-SettingsPath`, `-ClaudeJsonPath`,
+  `-ProfilePath`, `-SkipBuild`, `-SkipPath` and `-SkipTerminalSettings`. Nothing
+  outside that temp directory is touched. Covers idempotency, that hooks of your
+  own survive both install and uninstall, `.claude.json` in its various shapes,
+  the profile backup, and that an existing `prompt` function is not clobbered.
+- **`tests/Tab.Tests.ps1`** — that the default starts the session in the tab you
+  are in without going near `wt.exe`, and the `-NewTab` handshake that decides
+  whether `tab` closes the tab it was run in, driven with a fake `wt.exe` and a
+  fake `claude` so no window is ever opened.
+
+Not covered, and not coverable without a real terminal and a live session:
+`AttachConsole`, the walk up the process tree, whether Windows Terminal actually
+renders what is sent, and the `-NewTab` `exit` that closes the old tab — `exit` from
+a dot-sourced script only takes the shell down in an interactive host, so no
+harness can observe it. Those stay manual:
+
+```powershell
+TabSignal.exe set 3            # spinning ring
+TabSignal.exe set 1 100        # steady ring
+TabSignal.exe clear            # no ring
+TabSignal.exe color orange
+TabSignal.exe title "Test"     # tab title (ignored in tabs with a fixed title)
+```
+
+Troubleshooting: set `TABSIGNAL_LOG=C:\path\to\tabsignal.log` (or pass
+`--log FILE`) to log the process chain and the sequences that were sent.
+
+## Files
+
+| File | |
+|------|---|
+| `TabSignal.cs` | the whole program: hooks, ring, color, title |
+| `build.ps1` | compiles `TabSignal.exe` with `csc.exe` from .NET Framework |
+| `install.ps1` | hooks, PowerShell profile, PATH, Windows Terminal settings |
+| `tab.ps1` | the `tab` command: project, name, color, session |
+| `tab.cmd` | `tab` from cmd |
+| `test.ps1`, `tests/` | the two test suites |
+| `blank.png` | transparent 1×1 profile icon |
+
+`TabSignal.exe`, `TabSignal.Tests.exe` and `projects.txt` are generated and not
+tracked.
+
+## Notes
+
+This project was written with [Claude Code](https://claude.com/claude-code) —
+the code, the scripts and this README are AI-generated, then tested and reviewed
+by hand on Windows 11 with Windows Terminal. It relies on Claude Code hook names
+and on Windows Terminal escape-sequence behavior, either of which may change in a
+future version.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

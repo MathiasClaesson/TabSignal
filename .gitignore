@@ -1,5 +1,7 @@
 TabSignal.exe
 TabSignal.new.exe
 TabSignal.old.exe
+TabSignal.Tests.exe
 projects.txt
 *.log
+*.bak-*

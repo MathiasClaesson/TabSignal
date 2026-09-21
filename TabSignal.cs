@@ -1,23 +1,25 @@
-// TabSignal - visar Claude Code-sessionens status i Windows Terminal-fliken.
+// TabSignal - shows the state of a Claude Code session in the Windows Terminal tab.
 //
-// Statusen ar Windows Terminals progressring i flikens ikonplats (OSC 9;4):
-//   arbetar      ringen snurrar (state 3)
-//   behover dig  stilla ring (state 1, 100 %): klar, tillstand eller fraga
-//   ny/avslutad  ingen ring (state 0)
-// Ringens farg och form ar Windows Terminals egna (systemets accentfarg) och
-// kan inte andras. Claude Codes egen titelglyf (◐/✳) undviks genom att cs
-// oppnar sessionen i en flik med fast titel (wt --suppressApplicationTitle).
+// The state is Windows Terminal's progress ring, drawn in the tab's icon slot (OSC 9;4):
+//   working    spinning ring (state 3)
+//   needs you  steady ring (state 1, 100 %): done, permission request or question
+//   new/ended  no ring (state 0)
+// The ring's shape and color belong to Windows Terminal (the system accent color)
+// and cannot be changed. Claude Code's own title glyph (the spinner and the done
+// marker) is avoided by opening the session in a tab with a fixed title
+// (wt --suppressApplicationTitle), see tab.ps1.
 //
-// Skrivningen sker till den konsol som ager fliken (AttachConsole), eftersom
-// hooks kors utan egen konsol. Flikfarg satts med DECAC.
+// Hooks run without a console of their own, so the sequences are written to the
+// console that owns the tab (AttachConsole). The tab color is set with DECAC.
 //
-// Anvandning:
-//   TabSignal.exe hook [--matcher NAMN] [--bell] [--log FIL]   (laser hook-JSON fran stdin)
-//   TabSignal.exe title "text"                              (satt titeln nu)
-//   TabSignal.exe color <farg|#rrggbb|0-255|none> | color --for "namn"
-//   TabSignal.exe recolor                                   (fargar om alla Claude-flikar)
-//   TabSignal.exe set <state 0-4> [progress] | clear        (ringen manuellt)
-//   TabSignal.exe bell | raw <sekvens>
+// Usage:
+//   TabSignal.exe hook [--matcher NAME] [--bell] [--log FILE]   (reads hook JSON from stdin)
+//   TabSignal.exe title "text"                               (set the tab title now)
+//   TabSignal.exe color <name|#rrggbb|0-255|none> | color --for "session name"
+//   TabSignal.exe colors [--for "session name"]               (print the palette as data)
+//   TabSignal.exe recolor                                     (recolor every Claude tab)
+//   TabSignal.exe set <state 0-4> [progress] | clear          (drive the ring manually)
+//   TabSignal.exe cwd [path] | bell | raw <sequence>
 
 using System;
 using System.Collections.Generic;
@@ -26,7 +28,6 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading;
 
 static class TabSignal
 {
@@ -40,6 +41,8 @@ static class TabSignal
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     static extern bool WriteConsoleW(IntPtr h, string s, uint n, out uint written, IntPtr reserved);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr GetStdHandle(int which);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool WriteFile(IntPtr h, byte[] buf, uint n, out uint written, IntPtr overlapped);
     [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool Process32FirstW(IntPtr snap, ref PROCESSENTRY32 e);
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool Process32NextW(IntPtr snap, ref PROCESSENTRY32 e);
@@ -55,7 +58,8 @@ static class TabSignal
 
     const uint ATTACH_PARENT_PROCESS = 0xFFFFFFFF;
     const uint ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004;
-    static readonly string ESC = ((char)27).ToString(), BEL = ((char)7).ToString();
+    const int STD_OUTPUT_HANDLE = -11;
+    internal static readonly string ESC = ((char)27).ToString(), BEL = ((char)7).ToString();
 
     static string logFile;
     static void Log(string s)
@@ -64,7 +68,7 @@ static class TabSignal
         try { File.AppendAllText(logFile, DateTime.Now.ToString("HH:mm:ss.fff ") + "[" + Process.GetCurrentProcess().Id + "] " + s + Environment.NewLine); } catch { }
     }
 
-    // ---------------- Hitta konsolen ----------------
+    // ---------------- Finding the console ----------------
     struct Proc { public uint Parent; public string Name; }
 
     static Dictionary<uint, Proc> Snapshot()
@@ -83,10 +87,10 @@ static class TabSignal
         return map;
     }
 
-    static uint claudePid;   // claude.exe i foraldrakedjan, om hittad
+    static uint claudePid;   // claude.exe in the parent chain, if found
 
-    // Gar uppat i processtradet: hook -> cmd -> claude -> skal -> WindowsTerminal.
-    // Returnerar processen direkt under WindowsTerminal (skalet som ager fliken).
+    // Walks up the process tree: hook -> cmd -> claude -> shell -> WindowsTerminal.
+    // Returns the process directly below WindowsTerminal (the shell that owns the tab).
     static uint FindTarget()
     {
         var map = Snapshot();
@@ -128,26 +132,44 @@ static class TabSignal
 
     static string Escape(string s) { return s.Replace(ESC, "ESC").Replace(BEL, "BEL"); }
 
-    static string Progress(int state, int progress)
+    internal static string Progress(int state, int progress)
     {
         if (state < 0) state = 0; if (state > 4) state = 4;
         if (progress < 0) progress = 0; if (progress > 100) progress = 100;
         return ESC + "]9;4;" + state + ";" + progress + BEL;
     }
 
-    static string TitleSeq(string title) { return ESC + "]2;" + title + BEL; }
+    internal static string TitleSeq(string title) { return ESC + "]2;" + title + BEL; }
 
-    // ---------------- Sessionsnamn ----------------
-    static string Json(string json, string key)
+    // ---------------- Session name ----------------
+    // Deliberately a regex rather than a JSON parser: the hook payloads are small and
+    // flat, and this keeps the program to one dependency-free file. The key is matched
+    // together with its opening quote, so a longer key ending the same way (tool_name
+    // vs name) does not shadow it. The limitation is that the first match anywhere
+    // wins, so a nested object using the same key would be picked up instead.
+    internal static string Json(string json, string key)
     {
         var m = Regex.Match(json, "\"" + key + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
         return m.Success ? Regex.Unescape(m.Groups[1].Value) : "";
     }
 
-    // Namn, i samma ordning som Claude Code sjalv visar det:
-    //   1. namn satt av anvandaren (--name eller /rename)   ~/.claude/sessions/<claude-pid>.json, nameSource=user
-    //   2. AI-genererad sessionstitel                        sista "aiTitle" i transkriptet
-    //   3. mappnamnet
+    // A path is embedded in OSC 9;9 between quotes, so strip anything that would end
+    // the sequence early or start one of its own: a quote, or a control character
+    // such as ESC or BEL.
+    internal static string SafePath(string path)
+    {
+        return path == null ? "" : Regex.Replace(path, "[\\x00-\\x1f\\x7f\"]", "");
+    }
+
+    internal static string CwdSeq(string path)
+    {
+        return ESC + "]9;9;\"" + SafePath(path) + "\"" + ESC + "\\";
+    }
+
+    // The name, resolved the way Claude Code itself shows it:
+    //   1. a name set by the user (--name or /rename)  ~/.claude/sessions/<claude-pid>.json, nameSource=user
+    //   2. the AI-generated session title               the last "aiTitle" in the transcript
+    //   3. the directory name
     static string SessionName(uint pid, string fallbackCwd)
     {
         string cwd = fallbackCwd;
@@ -183,61 +205,71 @@ static class TabSignal
         {
             long take = Math.Min(fs.Length, 512 * 1024);
             fs.Seek(fs.Length - take, SeekOrigin.Begin);
-            var buf = new byte[take]; int n = fs.Read(buf, 0, buf.Length);
-            string tail = Encoding.UTF8.GetString(buf, 0, n);
+            var buf = new byte[take];
+            int n = 0, r;
+            while (n < buf.Length && (r = fs.Read(buf, n, buf.Length - n)) > 0) n += r;   // one Read may return less
+            // Seeking to a fixed offset can land inside a multi-byte character, so skip
+            // the continuation bytes rather than decoding them into U+FFFD.
+            int start = 0;
+            if (take < fs.Length) while (start < n && (buf[start] & 0xC0) == 0x80) start++;
+            string tail = Encoding.UTF8.GetString(buf, start, n - start);
             var ms = Regex.Matches(tail, "\"aiTitle\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
             return ms.Count > 0 ? Regex.Unescape(ms[ms.Count - 1].Groups[1].Value) : "";
         }
     }
 
-    // ---------------- Flikfarg ----------------
-    // Fliken far en egen RGB-farg: OSC 4 definierar om index TabSlot i just den
-    // flikens fargtabell och DECAC (ESC [ 2 ; fg ; bg , |) pekar fliken pa det.
-    // Index 17 (#00005f i xterm-kuben) anvands inte av Claude Code (truecolor) eller
-    // av terminalens fargschema (0-15), sa texten i fliken paverkas inte.
-    const int TabSlot = 17;
-    static readonly string[][] Palette = {
-        new[] { "green",   "gron",   "1f5c3a" },
-        new[] { "teal",    "teal",   "175a5f" },
-        new[] { "blue",    "bla",    "1f4a80" },
-        new[] { "purple",  "lila",   "4a3582" },
-        new[] { "red",     "rod",    "7a2530" },
-        new[] { "orange",  "orange", "8a3e14" },
-        new[] { "brown",   "brun",   "5e4520" },
-        new[] { "magenta", "rosa",   "7a2a5c" },
-        new[] { "gray",    "gra",    "3a4250" },   // valjs aldrig automatiskt
+    // ---------------- Tab color ----------------
+    // The tab gets an RGB color of its own: OSC 4 redefines index TabSlot in that
+    // one tab's color table, and DECAC (ESC [ 2 ; fg ; bg , |) points the tab at it.
+    // Index 17 (#00005f in the xterm cube) is used neither by the terminal's color
+    // scheme (0-15) nor by Claude Code, which draws in truecolor, so the text inside
+    // the tab is unaffected.
+    internal const int TabSlot = 17;
+    internal static readonly string[][] Palette = {
+        new[] { "green",   "1f5c3a" },
+        new[] { "teal",    "175a5f" },
+        new[] { "blue",    "1f4a80" },
+        new[] { "purple",  "4a3582" },
+        new[] { "red",     "7a2530" },
+        new[] { "orange",  "8a3e14" },
+        new[] { "brown",   "5e4520" },
+        new[] { "magenta", "7a2a5c" },
+        new[] { "gray",    "3a4250" },   // never picked automatically
     };
 
-    static string Fold(string s) { return s.ToLowerInvariant().Replace("ö", "o").Replace("ä", "a").Replace("å", "a").Replace("é", "e"); }
+    internal static string Fold(string s) { return s.ToLowerInvariant(); }
 
-    static string HexFor(string name)
+    // The same name always yields the same color, so a session keeps its color
+    // when it is reopened. The last palette entry is excluded from the automatic
+    // pick, which makes it the neutral "I chose this myself" color.
+    internal static string HexFor(string name)
     {
         uint h = 2166136261;
         foreach (char c in Fold(name)) { h ^= c; h *= 16777619; }
         int auto = Palette.Length - 1;
-        return Palette[(int)(h % (uint)auto)][2];
+        return Palette[(int)(h % (uint)auto)][1];
     }
 
-    static string RgbSeq(string hex)
+    internal static string RgbSeq(string hex)
     {
         return ESC + "]4;" + TabSlot + ";rgb:" + hex.Substring(0, 2) + "/" + hex.Substring(2, 2) + "/" + hex.Substring(4, 2) + BEL
              + ESC + "[2;15;" + TabSlot + ",|";
     }
 
-    static string ColorSeq(string spec, string forName)
+    internal static string ColorSeq(string spec, string forName)
     {
         if (forName != null) return RgbSeq(HexFor(forName));
         if (spec == null) return null;
         string f = Fold(spec);
-        if (f == "none" || f == "ingen" || f == "reset") return ESC + "[2;0;0,|" + ESC + "]104;" + TabSlot + BEL;
+        if (f == "none" || f == "reset") return ESC + "[2;0;0,|" + ESC + "]104;" + TabSlot + BEL;
         int idx;
         if (int.TryParse(f, out idx) && idx >= 0 && idx <= 255) return ESC + "[2;15;" + idx + ",|";
         if (Regex.IsMatch(f, "^#?[0-9a-f]{6}$")) return RgbSeq(f.TrimStart('#'));
-        foreach (var p in Palette) if (p[0] == f || p[1] == f) return RgbSeq(p[2]);
+        foreach (var p in Palette) if (p[0] == f) return RgbSeq(p[1]);
         return null;
     }
 
-    // Senast satta flikfarg per flik (skalets pid), sa att recolor kan skicka den igen.
+    // The color last set per tab (keyed by the shell's pid), so recolor can send it again.
     static string ColorStore()
     {
         string d = Path.Combine(Path.GetTempPath(), "TabSignal", "colors");
@@ -253,12 +285,20 @@ static class TabSignal
         else File.WriteAllText(f, seq);
     }
 
-    // Fargar om alla oppna flikar dar Claude kor: sparad farg om den finns, annars
-    // automatisk farg ur sessionsnamnet. Anvands efter byte av palett eller WT-tema.
+    // Recolors every open tab that is running Claude: the stored color if there is
+    // one, otherwise the automatic color derived from the session name. Useful after
+    // editing the palette or switching the Windows Terminal theme.
     static int Recolor()
     {
         var map = Snapshot();
         var done = new HashSet<uint>();
+        // AttachConsole replaces this process's standard handles, so after the first
+        // SendTo, Console.Out writes succeed but reach nothing - which is why recolor
+        // used to print no report at all. Keep the real handle and the lines, and
+        // write them once at the end.
+        var report = new List<string>();
+        IntPtr savedOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        bool redirected = Console.IsOutputRedirected;
         foreach (var kv in map)
         {
             if (!kv.Value.Name.StartsWith("claude", StringComparison.OrdinalIgnoreCase)) continue;
@@ -274,27 +314,61 @@ static class TabSignal
             string f = Path.Combine(ColorStore(), shell.ToString());
             string seq = File.Exists(f) ? File.ReadAllText(f) : RgbSeq(HexFor(SessionName(kv.Key, null)));
             bool ok = SendTo(shell, seq);
-            Console.Out.WriteLine((ok ? "fargad  " : "missade ") + shell + "  " + SessionName(kv.Key, null));
+            report.Add((ok ? "colored " : "missed  ") + shell + "  " + SessionName(kv.Key, null));
         }
         foreach (string f in Directory.GetFiles(ColorStore()))
         {
             uint id; Proc p;
-            if (!uint.TryParse(Path.GetFileName(f), out id) || !map.TryGetValue(id, out p)) File.Delete(f);   // stangda flikar
+            if (!uint.TryParse(Path.GetFileName(f), out id) || !map.TryGetValue(id, out p)) File.Delete(f);   // closed tabs
         }
+        WriteReport(report, savedOut, redirected);
+        return 0;
+    }
+
+    // Writes the recolor report once SendTo has taken our standard handles away.
+    // A redirected stdout is a file or pipe, and that handle is still open even
+    // though the process no longer points at it, so write to it directly. A stdout
+    // that was a console is gone, so re-attach to the shell that launched us.
+    static void WriteReport(List<string> lines, IntPtr savedOut, bool redirected)
+    {
+        if (lines.Count == 0) return;
+        var sb = new StringBuilder();
+        foreach (string l in lines) sb.Append(l).Append("\r\n");
+        string s = sb.ToString();
+        if (redirected)
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(s);
+            uint n; WriteFile(savedOut, bytes, (uint)bytes.Length, out n, IntPtr.Zero);
+            return;
+        }
+        FreeConsole();
+        if (!AttachConsole(ATTACH_PARENT_PROCESS)) return;
+        IntPtr h = CreateFileW("CONOUT$", 0xC0000000u, 0x3u, IntPtr.Zero, 3u, 0u, IntPtr.Zero);
+        if (h == IntPtr.Zero || h == new IntPtr(-1)) { FreeConsole(); return; }
+        try { uint n; WriteConsoleW(h, s, (uint)s.Length, out n, IntPtr.Zero); }
+        finally { CloseHandle(h); FreeConsole(); }
+    }
+
+    // The palette as data, for the color menu in tab.ps1.  number|name|rrggbb
+    static int ListColors(string forName)
+    {
+        for (int i = 0; i < Palette.Length; i++)
+            Console.WriteLine((i + 1) + "|" + Palette[i][0] + "|" + Palette[i][1]);
+        if (forName != null) Console.WriteLine("0|auto|" + HexFor(forName));
         return 0;
     }
 
     static string PaletteHelp()
     {
         var sb = new StringBuilder();
-        foreach (var p in Palette) sb.Append(p[0]).Append('/').Append(p[1]).Append(' ');
+        foreach (var p in Palette) sb.Append(p[0]).Append(' ');
         return sb.ToString().TrimEnd();
     }
 
-    // ---------------- Hook-logik ----------------
-    enum Mode { Keep, Working, NeedsYou, Start, End }
+    // ---------------- Hook logic ----------------
+    internal enum Mode { Keep, Working, NeedsYou, Start, End }
 
-    static Mode ForHook(string json, string matcher)
+    internal static Mode ForHook(string json, string matcher)
     {
         string ev = Json(json, "hook_event_name");
         string tool = Json(json, "tool_name");
@@ -302,7 +376,7 @@ static class TabSignal
         Log("event=" + ev + " tool=" + tool + " kind=" + kind);
         switch (ev)
         {
-            case "SessionStart":      return Mode.Start;        // ny session: ingen ring
+            case "SessionStart":      return Mode.Start;        // new session: no ring
             case "SessionEnd":        return Mode.End;
             case "UserPromptSubmit":  return Mode.Working;
             case "Stop":              return Mode.NeedsYou;
@@ -344,19 +418,19 @@ static class TabSignal
             {
                 case "hook":
                 {
-                    string json = Console.In.ReadToEnd();      // las stdin innan konsolen byts
+                    string json = Console.In.ReadToEnd();      // read stdin before switching console
                     Mode m = ForHook(json, matcher);
                     if (m == Mode.Keep) return 0;
                     uint t = FindTarget();
-                    // OSC 9;9 talar om for Windows Terminal vilken mapp fliken star i, sa att
-                    // "Duplicera flik" / "Dela ruta" oppnar i sessionens mapp.
+                    // OSC 9;9 tells Windows Terminal which directory the tab is in, so that
+                    // "Duplicate tab" / "Split pane" opens in the session's directory.
                     string hcwd = Json(json, "cwd");
-                    string cwdSeq = hcwd.Length > 0 ? ESC + "]9;9;\"" + hcwd + "\"" + ESC + "\\" : "";
+                    string cwdSeq = hcwd.Length > 0 ? CwdSeq(hcwd) : "";
                     switch (m)
                     {
-                        case Mode.Working:  SendTo(t, cwdSeq + Progress(3, 0)); break;                       // ringen snurrar
-                        case Mode.NeedsYou: SendTo(t, cwdSeq + Progress(1, 100) + (bell ? BEL : "")); break; // stilla ring
-                        case Mode.Start:    SendTo(t, cwdSeq + Progress(0, 0)); break;                       // ingen ring
+                        case Mode.Working:  SendTo(t, cwdSeq + Progress(3, 0)); break;                       // spinning ring
+                        case Mode.NeedsYou: SendTo(t, cwdSeq + Progress(1, 100) + (bell ? BEL : "")); break; // steady ring
+                        case Mode.Start:    SendTo(t, cwdSeq + Progress(0, 0)); break;                       // no ring
                         case Mode.End:      SendTo(t, Progress(0, 0)); break;
                     }
                     return 0;
@@ -364,8 +438,8 @@ static class TabSignal
                 case "title":
                     seq = TitleSeq(rest.Count > 1 ? string.Join(" ", rest.GetRange(1, rest.Count - 1).ToArray()) : "");
                     break;
-                case "cwd":   // tala om mappen for Windows Terminal (OSC 9;9)
-                    seq = ESC + "]9;9;\"" + (rest.Count > 1 ? rest[1] : Environment.CurrentDirectory) + "\"" + ESC + "\\";
+                case "cwd":   // tell Windows Terminal the current directory (OSC 9;9)
+                    seq = CwdSeq(rest.Count > 1 ? rest[1] : Environment.CurrentDirectory);
                     break;
                 case "set":
                     int state = rest.Count > 1 ? int.Parse(rest[1]) : 0;
@@ -377,7 +451,7 @@ static class TabSignal
                 case "clear": seq = Progress(0, 0); break;
                 case "color":
                     seq = ColorSeq(rest.Count > 1 ? rest[1] : null, forName);
-                    if (seq == null) { Console.Error.WriteLine("Farger: " + PaletteHelp() + " | #rrggbb | 0-255 | none  (eller --for \"arbetsnamn\")"); return 1; }
+                    if (seq == null) { Console.Error.WriteLine("Colors: " + PaletteHelp() + " | #rrggbb | 0-255 | none  (or --for \"session name\")"); return 1; }
                     {
                         uint t = FindTarget();
                         SendTo(t, seq);
@@ -386,13 +460,15 @@ static class TabSignal
                     return 0;
                 case "recolor":
                     return Recolor();
+                case "colors":
+                    return ListColors(forName);
                 default:
-                    Console.Error.WriteLine("Usage: TabSignal.exe hook [--matcher NAME] | title <text> | color <farg|#rrggbb|0-255|none> | color --for <namn> | recolor | set <0-4> [0-100] | clear | bell | raw <sekvens>");
+                    Console.Error.WriteLine("Usage: TabSignal.exe hook [--matcher NAME] | title <text> | color <name|#rrggbb|0-255|none> | color --for <name> | colors [--for <name>] | recolor | set <0-4> [0-100] | clear | cwd [path] | bell | raw <sequence>");
                     return 0;
             }
             if (seq != null) Send(seq);
         }
         catch (Exception ex) { Log("error: " + ex); }
-        return 0; // blockera aldrig Claude Code
+        return 0; // never block Claude Code
     }
 }

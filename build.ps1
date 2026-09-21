@@ -1,17 +1,19 @@
-# Kompilerar TabSignal.exe med C#-kompilatorn som foljer med .NET Framework (finns pa alla Windows).
-# Bygger till en tempfil och byter namn, sa att det fungerar aven nar en blinkprocess kor den gamla exe:n.
+# Compiles TabSignal.exe with the C# compiler that ships with .NET Framework
+# (present on every Windows install, no SDK needed).
+# Builds to a temp file and renames, so that it also works while a running
+# process still holds the old exe.
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path $csc)) { $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe' }
-if (-not (Test-Path $csc)) { throw "Hittar inte csc.exe (.NET Framework 4.x)" }
+if (-not (Test-Path $csc)) { throw "csc.exe (.NET Framework 4.x) not found" }
 $exe = Join-Path $here 'TabSignal.exe'
 $tmp = Join-Path $here 'TabSignal.new.exe'
 $old = Join-Path $here 'TabSignal.old.exe'
-Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue   # fran forra bygget, om den var last da
+Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue   # left over from the previous build, if it was locked then
 & $csc /nologo /target:exe /optimize+ /platform:anycpu "/out:$tmp" "$here\TabSignal.cs"
-if ($LASTEXITCODE -ne 0) { throw "Kompilering misslyckades ($LASTEXITCODE)" }
-if (Test-Path $exe) { Move-Item -LiteralPath $exe -Destination $old -Force }   # en korande exe kan bytas namn pa, inte skrivas over
+if ($LASTEXITCODE -ne 0) { throw "Compilation failed ($LASTEXITCODE)" }
+if (Test-Path $exe) { Move-Item -LiteralPath $exe -Destination $old -Force }   # a running exe can be renamed, but not overwritten
 Move-Item -LiteralPath $tmp -Destination $exe -Force
 Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue
-Write-Host "Byggde $exe"
+Write-Host "Built $exe"
