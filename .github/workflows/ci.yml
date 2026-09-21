@@ -9,7 +9,7 @@ jobs:
   build-and-test:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # csc.exe ships with .NET Framework 4.x, which is present on the runner,
       # so there is nothing to install.
