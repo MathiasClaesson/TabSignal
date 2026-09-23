@@ -12,9 +12,9 @@
 #
 # Default: the session takes over the tab you are standing in - directory, title
 # and color are set there and claude starts. Nothing is opened and nothing is
-# closed, so no window can be taken down by mistake. The title is just the name
-# (Claude Code's own title is turned off by install.ps1), so /rename does not show
-# up in the tab. The color is set with an escape sequence rather than
+# closed, so no window can be taken down by mistake. The title is the name followed
+# by the git branch, kept up to date by the hooks (Claude Code's own title is turned
+# off by install.ps1). The color is set with an escape sequence rather than
 # wt --tabColor, so that it can be changed later with:
 #   TabSignal.exe color purple
 #
@@ -242,7 +242,7 @@ if (-not $NewTab) {
     return
 }
 
-# -NewTab: a new tab with a fixed title, in the most recently used Windows Terminal window.
+# -NewTab: a new tab in the most recently used Windows Terminal window.
 $readyDir = Join-Path ([System.IO.Path]::GetTempPath()) 'TabSignal\ready'
 New-Item -ItemType Directory -Force $readyDir | Out-Null
 Get-ChildItem -LiteralPath $readyDir -File -ErrorAction SilentlyContinue |
@@ -256,7 +256,7 @@ $inner = @('-NoExit', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Quot
 # Only ask the new tab to report back when we intend to act on it.
 if (-not $KeepTab) { $inner += @('-Ready', (Quote-Arg $readyFile)) }
 if ($Args) { $inner += @('-Args', (Quote-Arg $Args)) }
-$wt = @('-w', '0', 'new-tab', '-d', (Quote-Arg $Dir), '--title', (Quote-Arg $Name), '--suppressApplicationTitle', 'powershell.exe') + $inner
+$wt = @('-w', '0', 'new-tab', '-d', (Quote-Arg $Dir), '--title', (Quote-Arg $Name), 'powershell.exe') + $inner
 # wt.exe treats ; as a command separator even inside quotes, so a session name or
 # path containing one would split the command line and the tab would never start.
 $wt = @($wt | ForEach-Object { $_ -replace ';', '\;' })

@@ -3,9 +3,9 @@
 [![CI](https://github.com/MathiasClaesson/TabSignal/actions/workflows/ci.yml/badge.svg)](https://github.com/MathiasClaesson/TabSignal/actions/workflows/ci.yml)
 
 Shows the state of a [Claude Code](https://claude.com/claude-code) session in the
-Windows Terminal tab, and starts sessions with a project directory, a name and a
-tab color. Self-contained: no server, no dependencies, one small `.exe` built from
-a single C# file.
+Windows Terminal tab, together with the session name and the git branch, and starts
+sessions with a project directory, a name and a tab color. Self-contained: no
+server, no dependencies, one small `.exe` built from a single C# file.
 
 Windows + Windows Terminal only.
 
@@ -25,13 +25,14 @@ ring, so the ring is the only thing in that slot that can follow the session.
 Claude Code's built-in progress ring is switched off in `~/.claude.json`
 (`terminalProgressBarEnabled: false`) so that the two do not fight.
 
-The tab title is just the session name. Claude Code's own title glyphs (the
-working spinner, the done marker) are disabled via
-`"env": { "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1" }` in `~/.claude/settings.json`,
-so a session started with `tab`, and a plain `claude` too, shows only the name.
-With `tab -NewTab` the new tab gets a title that is fixed by Windows Terminal
-itself (`wt --title --suppressApplicationTitle`); the price is that `/rename`
-does not show up in the tab.
+The tab title is the session name followed by the git branch, `name · branch`.
+The hooks set it on every state change, so a `/rename` or a `git switch` shows up
+at the next prompt. The branch is read straight from `.git/HEAD` (worktrees
+included) without running git; a detached HEAD shows the short hash, and outside
+a repository the title is just the name. The branch comes last, so it is what
+Windows Terminal cuts off first when the tab is narrow. Claude Code's own title
+glyphs (the working spinner, the done marker) are disabled via
+`"env": { "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1" }` in `~/.claude/settings.json`.
 
 No bell (BEL) is sent by default. `.\install.ps1 -Bell` adds one when Claude needs
 you (bell glyph in the tab, flash according to `bellStyle`).
@@ -51,7 +52,7 @@ to its console (`AttachConsole`) and writes the sequences straight to `CONOUT$`:
   OSC 4 redefines index 17 in that one tab's color table, and DECAC points the tab
   at it. Index 17 is used neither by the color scheme (0–15) nor by Claude Code,
   which draws in truecolor.
-- `ESC ] 2 ; title BEL` — OSC 2, the tab title (only set manually, via `title`)
+- `ESC ] 2 ; title BEL` — OSC 2, the tab title: session name and git branch
 - `ESC ] 9 ; 9 ; "path" ESC \` — OSC 9;9, the current directory, so that
   "Duplicate tab" opens in the same place
 
@@ -133,8 +134,9 @@ The flow: pick a project by number (0 = the current directory), enter a session
 name (Enter gives the directory name), pick a color (Enter gives an automatic
 color derived from the name — the same name always gives the same color; `none`
 gives no color). The session then takes over the tab you are standing in: the
-directory, the title and the color are set there and claude starts. It runs as
-`claude --name "Name"`, so the name shows up in the `--resume` list too.
+directory, the title (name and git branch) and the color are set there and
+claude starts. It runs as `claude --name "Name"`, so the name shows up in the
+`--resume` list too.
 
 Nothing is opened and nothing is closed, so no window can be lost on the way.
 `tab` is a PowerShell function in your profile (added by `install.ps1`); from cmd,
@@ -216,7 +218,7 @@ TabSignal.exe color none
 Right-click the tab → "Duplicate tab" (or Ctrl+Shift+D) opens a new tab in the
 **same directory**: TabSignal reports the session's directory to Windows Terminal
 with OSC 9;9 on every hook event, `tab` does it at startup, and the `prompt`
-function does it in ordinary shells. Color and fixed title do not carry over —
+function does it in ordinary shells. Color and title do not carry over —
 Windows Terminal only copies the profile and the directory. Run `tab` in the new
 tab: Enter on the project prompt takes the current directory, Enter on the name
 gives the directory name, and the same name gives the same color.
@@ -250,7 +252,9 @@ Two suites, both run on every push and pull request via GitHub Actions:
   ring state (including that unknown events and non-`AskUserQuestion` tools leave
   the ring alone), how a color spec becomes an escape sequence, the automatic
   color derived from a session name, the clamping in `Progress`, the JSON field
-  extraction, and the sanitizing of a path before it goes into OSC 9;9.
+  extraction, the sanitizing of a path before it goes into OSC 9;9, and the tab
+  title: reading the branch from `.git/HEAD` (subdirectories, worktrees, a
+  detached HEAD, no repository) and joining it to the name.
 - **`tests/Install.Tests.ps1`** — a full install / re-install / uninstall round
   trip driven against a temp directory via `-SettingsPath`, `-ClaudeJsonPath`,
   `-ProfilePath`, `-SkipBuild`, `-SkipPath` and `-SkipTerminalSettings`. Nothing
@@ -273,7 +277,7 @@ TabSignal.exe set 3            # spinning ring
 TabSignal.exe set 1 100        # steady ring
 TabSignal.exe clear            # no ring
 TabSignal.exe color yellow
-TabSignal.exe title "Test"     # tab title (ignored in tabs with a fixed title)
+TabSignal.exe title "Test"     # tab title (replaced at the next hook event)
 ```
 
 Troubleshooting: set `TABSIGNAL_LOG=C:\path\to\tabsignal.log` (or pass

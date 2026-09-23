@@ -5,9 +5,8 @@
 //   needs you  steady ring (state 1, 100 %): done, permission request or question
 //   new/ended  no ring (state 0)
 // The ring's shape and color belong to Windows Terminal (the system accent color)
-// and cannot be changed. Claude Code's own title glyph (the spinner and the done
-// marker) is avoided by opening the session in a tab with a fixed title
-// (wt --suppressApplicationTitle), see tab.ps1.
+// and cannot be changed. The tab title is the session name and the git branch;
+// Claude Code's own title is turned off by install.ps1.
 //
 // Hooks run without a console of their own, so the sequences are written to the
 // console that owns the tab (AttachConsole). The tab color is set with DECAC.
@@ -140,6 +139,44 @@ static class TabSignal
     }
 
     internal static string TitleSeq(string title) { return ESC + "]2;" + title + BEL; }
+
+    internal static string TabTitle(string name, string branch)
+    {
+        string title = string.IsNullOrEmpty(branch) ? name : name + " \u00b7 " + branch;
+        return Regex.Replace(title ?? "", "[\\x00-\\x1f\\x7f]", "");
+    }
+
+    internal static string GitBranch(string dir)
+    {
+        try
+        {
+            for (string d = dir; !string.IsNullOrEmpty(d); d = Path.GetDirectoryName(d))
+            {
+                string git = Path.Combine(d, ".git");
+                string gitDir;
+                if (Directory.Exists(git)) gitDir = git;
+                else if (File.Exists(git))
+                {
+                    Match m = Regex.Match(File.ReadAllText(git), "^gitdir:\\s*(.+?)\\s*$", RegexOptions.Multiline);
+                    if (!m.Success) return "";
+                    gitDir = Path.IsPathRooted(m.Groups[1].Value) ? m.Groups[1].Value : Path.GetFullPath(Path.Combine(d, m.Groups[1].Value));
+                }
+                else continue;
+                string head = Path.Combine(gitDir, "HEAD");
+                return File.Exists(head) ? BranchFromHead(File.ReadAllText(head)) : "";
+            }
+        }
+        catch (Exception ex) { Log("git branch: " + ex.Message); }
+        return "";
+    }
+
+    internal static string BranchFromHead(string head)
+    {
+        head = head.Trim();
+        if (head.StartsWith("ref: refs/heads/")) return head.Substring("ref: refs/heads/".Length);
+        if (head.StartsWith("ref: ")) return head.Substring("ref: ".Length);
+        return head.Length >= 7 ? head.Substring(0, 7) : head;
+    }
 
     // ---------------- Session name ----------------
     // Deliberately a regex rather than a JSON parser: the hook payloads are small and
@@ -427,11 +464,12 @@ static class TabSignal
                     // "Duplicate tab" / "Split pane" opens in the session's directory.
                     string hcwd = Json(json, "cwd");
                     string cwdSeq = hcwd.Length > 0 ? CwdSeq(hcwd) : "";
+                    string titleSeq = m == Mode.End ? "" : TitleSeq(TabTitle(SessionName(claudePid, hcwd), GitBranch(hcwd)));
                     switch (m)
                     {
-                        case Mode.Working:  SendTo(t, cwdSeq + Progress(3, 0)); break;                       // spinning ring
-                        case Mode.NeedsYou: SendTo(t, cwdSeq + Progress(1, 100) + (bell ? BEL : "")); break; // steady ring
-                        case Mode.Start:    SendTo(t, cwdSeq + Progress(0, 0)); break;                       // no ring
+                        case Mode.Working:  SendTo(t, cwdSeq + titleSeq + Progress(3, 0)); break;                       // spinning ring
+                        case Mode.NeedsYou: SendTo(t, cwdSeq + titleSeq + Progress(1, 100) + (bell ? BEL : "")); break; // steady ring
+                        case Mode.Start:    SendTo(t, cwdSeq + titleSeq + Progress(0, 0)); break;                       // no ring
                         case Mode.End:      SendTo(t, Progress(0, 0)); break;
                     }
                     return 0;

@@ -6,7 +6,8 @@
 //
 // What is covered: which hook event produces which ring state, how a color spec
 // turns into an escape sequence, the automatic color derived from a session name,
-// clamping of the progress values, and the JSON field extraction.
+// clamping of the progress values, the JSON field extraction, and the tab title
+// with the git branch read from .git/HEAD.
 //
 // What is NOT covered, and cannot be without a real terminal and a live session:
 // AttachConsole, the walk up the process tree, Recolor, and whether Windows
@@ -238,6 +239,50 @@ static class TabSignalTests
         Ok(TabSignal.TabSlot > 15 && TabSignal.TabSlot <= 255, "The tab color slot is outside the scheme range 0-15");
     }
 
+    static void TestTabTitle()
+    {
+        Eq(TabSignal.TabTitle("api", "main"), "api \u00b7 main", "The branch follows the name");
+        Eq(TabSignal.TabTitle("api", ""), "api", "No branch gives just the name");
+        Eq(TabSignal.TabTitle("api", null), "api", "A null branch gives just the name");
+        Eq(TabSignal.TabTitle("a" + ((char)7) + "b", "x" + ((char)27) + "y"), "ab \u00b7 xy", "Control characters are stripped");
+    }
+
+    static void TestBranchFromHead()
+    {
+        Eq(TabSignal.BranchFromHead("ref: refs/heads/main\n"), "main", "A branch ref gives the branch name");
+        Eq(TabSignal.BranchFromHead("ref: refs/heads/feature/FAS-1\r\n"), "feature/FAS-1", "Slashes in the branch name are kept");
+        Eq(TabSignal.BranchFromHead("0123456789abcdef0123456789abcdef01234567\n"), "0123456", "A detached HEAD gives the short hash");
+    }
+
+    static void TestGitBranch()
+    {
+        string root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "TabSignalTests-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string repo = System.IO.Path.Combine(root, "repo");
+            string sub = System.IO.Path.Combine(repo, "src", "deep");
+            System.IO.Directory.CreateDirectory(System.IO.Path.Combine(repo, ".git"));
+            System.IO.Directory.CreateDirectory(sub);
+            System.IO.File.WriteAllText(System.IO.Path.Combine(repo, ".git", "HEAD"), "ref: refs/heads/develop\n");
+            Eq(TabSignal.GitBranch(repo), "develop", "The branch is read from .git/HEAD");
+            Eq(TabSignal.GitBranch(sub), "develop", "A subdirectory finds the repository above it");
+
+            string wt = System.IO.Path.Combine(root, "worktree");
+            string wtGit = System.IO.Path.Combine(repo, ".git", "worktrees", "wt");
+            System.IO.Directory.CreateDirectory(wt);
+            System.IO.Directory.CreateDirectory(wtGit);
+            System.IO.File.WriteAllText(System.IO.Path.Combine(wtGit, "HEAD"), "ref: refs/heads/hotfix\n");
+            System.IO.File.WriteAllText(System.IO.Path.Combine(wt, ".git"), "gitdir: " + wtGit + "\n");
+            Eq(TabSignal.GitBranch(wt), "hotfix", "A worktree follows the gitdir in its .git file");
+
+            string plain = System.IO.Path.Combine(root, "plain");
+            System.IO.Directory.CreateDirectory(plain);
+            Eq(TabSignal.GitBranch(plain), "", "Outside a repository there is no branch");
+            Eq(TabSignal.GitBranch(""), "", "An empty directory gives no branch");
+        }
+        finally { try { System.IO.Directory.Delete(root, true); } catch { } }
+    }
+
     static int Main()
     {
         TestForHook();
@@ -247,6 +292,9 @@ static class TabSignalTests
         TestJson();
         TestSafePath();
         TestPalette();
+        TestTabTitle();
+        TestBranchFromHead();
+        TestGitBranch();
 
         Console.WriteLine();
         Console.WriteLine(failed == 0
