@@ -120,23 +120,47 @@ session is running, since Claude Code writes to `~/.claude.json` itself.
 ## Starting a session: `tab`
 
 ```powershell
-tab                          # project list -> session name -> color
+tab                          # project list -> session name -> tool -> color
 tab "Name"                   # skips the name prompt
 tab "Name" -Color cyan       # a chosen color
 tab "Name" -Color none       # no tab color
 tab -Dir C:\proj             # skips the project list
 tab -NewTab                  # open the session in a new tab instead
 tab -KeepTab                 # with -NewTab: leave the tab you ran tab in open
-tab -Args "--resume"         # extra arguments for claude (split on whitespace)
+tab -Tool copilot            # skips the tool prompt (claude or copilot)
+tab -Update                  # update the tool before starting, even if done today
+tab -NoUpdate                # skip the daily update check
+tab -Args "--resume"         # extra arguments for the tool (split on whitespace)
 ```
 
-The flow: pick a project by number (0 = the current directory), enter a session
-name (Enter gives the directory name), pick a color (Enter gives an automatic
-color derived from the name — the same name always gives the same color; `none`
-gives no color). The session then takes over the tab you are standing in: the
-directory, the title (name and git branch) and the color are set there and
-claude starts. It runs as `claude --name "Name"`, so the name shows up in the
-`--resume` list too.
+The flow: pick a project by number (0 = the current directory), confirm or type
+a session name, pick the tool (Enter gives Claude Code, `2` gives GitHub Copilot
+CLI), pick a color (Enter gives an automatic color derived from the name — the
+same name always gives the same color; `none` gives no color).
+
+You do not have to make up a name: Enter gives the project's display name from
+`projects.txt` (the text after `|`), or the directory name when the project has
+none or is not in the list. Since the title adds the git branch, the tab reads
+e.g. `MeriterVy · feature/FAS-1234`. Type something at the prompt only when you
+want a name of your own, or rename later with `/rename` in Claude. The session then takes over the tab you are standing in: the directory,
+the title (name and git branch) and the color are set there and the tool starts.
+Claude runs as `claude --name "Name"`, so the name shows up in the `--resume` list
+too; Copilot has no `--name` and gets only `-Args`.
+
+#### Updates
+
+Before the tool starts, `tab` runs `claude update` or `copilot update` — at most
+once a day per tool, so opening tabs stays fast. The time of the last run is kept
+in `%LOCALAPPDATA%\TabSignal\update-<tool>.stamp`; a failed update is retried the
+next day. `-Update` runs it regardless and `-NoUpdate` skips it.
+
+#### Copilot
+
+The hooks are Claude Code hooks, so a Copilot session has no progress ring and
+its title is not refreshed while it runs: it gets the name and branch once, at
+start. The tab color works as for Claude, and `TabSignal.exe recolor` covers
+Copilot tabs too. With `-NewTab` the title is fixed
+(`wt --suppressApplicationTitle`), so Copilot cannot replace it with its own.
 
 Nothing is opened and nothing is closed, so no window can be lost on the way.
 `tab` is a PowerShell function in your profile (added by `install.ps1`); from cmd,
@@ -221,7 +245,7 @@ with OSC 9;9 on every hook event, `tab` does it at startup, and the `prompt`
 function does it in ordinary shells. Color and title do not carry over —
 Windows Terminal only copies the profile and the directory. Run `tab` in the new
 tab: Enter on the project prompt takes the current directory, Enter on the name
-gives the directory name, and the same name gives the same color.
+gives the same default name as before, and the same name gives the same color.
 
 ## Windows Terminal settings that get applied
 
@@ -244,7 +268,7 @@ Changes take effect a few seconds after the file is saved.
 .\test.ps1
 ```
 
-Two suites, both run on every push and pull request via GitHub Actions:
+Three suites, all run on every push and pull request via GitHub Actions:
 
 - **`tests/TabSignalTests.cs`** — the pure logic. Compiled together with
   `TabSignal.cs` into a separate test executable (`csc /main:`), so the shipped
@@ -254,7 +278,8 @@ Two suites, both run on every push and pull request via GitHub Actions:
   color derived from a session name, the clamping in `Progress`, the JSON field
   extraction, the sanitizing of a path before it goes into OSC 9;9, and the tab
   title: reading the branch from `.git/HEAD` (subdirectories, worktrees, a
-  detached HEAD, no repository) and joining it to the name.
+  detached HEAD, no repository) and joining it to the name, and which processes
+  count as a session for `recolor`.
 - **`tests/Install.Tests.ps1`** — a full install / re-install / uninstall round
   trip driven against a temp directory via `-SettingsPath`, `-ClaudeJsonPath`,
   `-ProfilePath`, `-SkipBuild`, `-SkipPath` and `-SkipTerminalSettings`. Nothing
@@ -264,7 +289,10 @@ Two suites, both run on every push and pull request via GitHub Actions:
 - **`tests/Tab.Tests.ps1`** — that the default starts the session in the tab you
   are in without going near `wt.exe`, and the `-NewTab` handshake that decides
   whether `tab` closes the tab it was run in, driven with a fake `wt.exe` and a
-  fake `claude` so no window is ever opened.
+  fake `claude` so no window is ever opened. Also that Copilot starts without
+  `--name`, and the daily update: run on first start, skipped the same day, due
+  again after a day, forced by `-Update` and skipped by `-NoUpdate` — against a
+  temp stamp directory.
 
 Not covered, and not coverable without a real terminal and a live session:
 `AttachConsole`, the walk up the process tree, whether Windows Terminal actually
@@ -278,6 +306,7 @@ TabSignal.exe set 1 100        # steady ring
 TabSignal.exe clear            # no ring
 TabSignal.exe color yellow
 TabSignal.exe title "Test"     # tab title (replaced at the next hook event)
+TabSignal.exe branch           # the git branch of the current directory
 ```
 
 Troubleshooting: set `TABSIGNAL_LOG=C:\path\to\tabsignal.log` (or pass
@@ -290,9 +319,9 @@ Troubleshooting: set `TABSIGNAL_LOG=C:\path\to\tabsignal.log` (or pass
 | `TabSignal.cs` | the whole program: hooks, ring, color, title |
 | `build.ps1` | compiles `TabSignal.exe` with `csc.exe` from .NET Framework |
 | `install.ps1` | hooks, PowerShell profile, PATH, Windows Terminal settings |
-| `tab.ps1` | the `tab` command: project, name, color, session |
+| `tab.ps1` | the `tab` command: project, name, tool, color, update, session |
 | `tab.cmd` | `tab` from cmd |
-| `test.ps1`, `tests/` | the two test suites |
+| `test.ps1`, `tests/` | the three test suites |
 | `blank.png` | transparent 1×1 profile icon |
 
 `TabSignal.exe`, `TabSignal.Tests.exe` and `projects.txt` are generated and not

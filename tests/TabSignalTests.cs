@@ -283,6 +283,14 @@ static class TabSignalTests
         finally { try { System.IO.Directory.Delete(root, true); } catch { } }
     }
 
+    static void TestIsSessionProcess()
+    {
+        Ok(TabSignal.IsSessionProcess("claude.exe"), "claude.exe is a session");
+        Ok(TabSignal.IsSessionProcess("copilot.exe"), "copilot.exe is a session");
+        Ok(TabSignal.IsSessionProcess("Copilot.exe"), "The match ignores case");
+        Ok(!TabSignal.IsSessionProcess("powershell.exe"), "A shell is not a session");
+    }
+
     static int Main()
     {
         TestForHook();
@@ -295,6 +303,7 @@ static class TabSignalTests
         TestTabTitle();
         TestBranchFromHead();
         TestGitBranch();
+        TestIsSessionProcess();
 
         Console.WriteLine();
         Console.WriteLine(failed == 0

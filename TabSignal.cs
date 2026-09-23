@@ -16,8 +16,9 @@
 //   TabSignal.exe title "text"                               (set the tab title now)
 //   TabSignal.exe color <name|#rrggbb|0-255|none> | color --for "session name"
 //   TabSignal.exe colors [--for "session name"]               (print the palette as data)
-//   TabSignal.exe recolor                                     (recolor every Claude tab)
+//   TabSignal.exe recolor                                     (recolor every Claude/Copilot tab)
 //   TabSignal.exe set <state 0-4> [progress] | clear          (drive the ring manually)
+//   TabSignal.exe branch [dir]                                (print the git branch)
 //   TabSignal.exe cwd [path] | bell | raw <sequence>
 
 using System;
@@ -323,9 +324,15 @@ static class TabSignal
         else File.WriteAllText(f, seq);
     }
 
-    // Recolors every open tab that is running Claude: the stored color if there is
-    // one, otherwise the automatic color derived from the session name. Useful after
-    // editing the palette or switching the Windows Terminal theme.
+    internal static bool IsSessionProcess(string exeName)
+    {
+        return exeName.StartsWith("claude", StringComparison.OrdinalIgnoreCase)
+            || exeName.StartsWith("copilot", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Recolors every open tab that is running Claude or Copilot: the stored color if
+    // there is one, otherwise the automatic color derived from the session name. Useful
+    // after editing the palette or switching the Windows Terminal theme.
     static int Recolor()
     {
         var map = Snapshot();
@@ -339,7 +346,7 @@ static class TabSignal
         bool redirected = Console.IsOutputRedirected;
         foreach (var kv in map)
         {
-            if (!kv.Value.Name.StartsWith("claude", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!IsSessionProcess(kv.Value.Name)) continue;
             uint shell = 0, pid = kv.Key;
             for (int depth = 0; depth < 32; depth++)
             {
@@ -477,6 +484,9 @@ static class TabSignal
                 case "title":
                     seq = TitleSeq(rest.Count > 1 ? string.Join(" ", rest.GetRange(1, rest.Count - 1).ToArray()) : "");
                     break;
+                case "branch":
+                    Console.WriteLine(GitBranch(rest.Count > 1 ? rest[1] : Environment.CurrentDirectory));
+                    return 0;
                 case "cwd":   // tell Windows Terminal the current directory (OSC 9;9)
                     seq = CwdSeq(rest.Count > 1 ? rest[1] : Environment.CurrentDirectory);
                     break;
@@ -502,7 +512,7 @@ static class TabSignal
                 case "colors":
                     return ListColors(forName);
                 default:
-                    Console.Error.WriteLine("Usage: TabSignal.exe hook [--matcher NAME] | title <text> | color <name|#rrggbb|0-255|none> | color --for <name> | colors [--for <name>] | recolor | set <0-4> [0-100] | clear | cwd [path] | bell | raw <sequence>");
+                    Console.Error.WriteLine("Usage: TabSignal.exe hook [--matcher NAME] | title <text> | branch [dir] | color <name|#rrggbb|0-255|none> | color --for <name> | colors [--for <name>] | recolor | set <0-4> [0-100] | clear | cwd [path] | bell | raw <sequence>");
                     return 0;
             }
             if (seq != null) Send(seq);

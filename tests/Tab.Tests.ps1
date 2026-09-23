@@ -33,7 +33,7 @@ function Invoke-Tab([bool]$Signal, [string[]]$Extra = @(), [string]$Window = '12
     $env:TABSIGNAL_FAKE_WT_WINDOW = $NewWindow
     $env:TABSIGNAL_FAKE_WT_LOG = ''
     $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $tab,
-           '-Name', 'session', '-Color', 'none', '-Dir', $dir,
+           '-Name', 'session', '-Color', 'none', '-Dir', $dir, '-Tool', 'claude', '-NoUpdate',
            '-WtCommand', $fakeWt, '-ReadyTimeoutSeconds', $timeout,
            '-WindowId', $Window, '-NewTab') + $Extra
     $start = Get-Date
@@ -90,11 +90,56 @@ $wtLog = Join-Path $dir 'wt.log'
 $env:TABSIGNAL_FAKE_WT_SIGNAL = '1'
 $env:TABSIGNAL_FAKE_WT_LOG = $wtLog
 $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $tab `
-    -Name 'session' -Color 'none' -Dir $dir -Command (Join-Path $here 'fake-claude.cmd') `
+    -Name 'session' -Color 'none' -Dir $dir -Command (Join-Path $here 'fake-claude.cmd') -NoUpdate `
     -WtCommand $fakeWt 2>&1 | Out-String
 $env:TABSIGNAL_FAKE_WT_LOG = ''
 Ok (-not (Test-Path -LiteralPath $wtLog)) 'The default opens no new tab'
 Ok ($out -match 'fake-claude --name session') 'The default starts claude with the session name in this tab'
+Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+
+# ------------------------------------------------- copilot
+
+$fake = Join-Path $here 'fake-claude.cmd'
+$dir = Join-Path ([System.IO.Path]::GetTempPath()) ('TabSignalTab-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force $dir | Out-Null
+$out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $tab `
+    -Name 'session' -Color 'none' -Dir $dir -Tool copilot -Command $fake -NoUpdate -WtCommand $fakeWt 2>&1 | Out-String
+Ok ($out -match 'fake-claude' -and $out -notmatch '--name') 'Copilot starts without --name, which it does not accept'
+
+# ------------------------------------------------- the default session name
+
+$projects = Join-Path $dir 'projects.txt'
+[System.IO.File]::WriteAllText($projects, "$dir | Listed name`r`n")
+$env:TABSIGNAL_PROJECTS = $projects
+$out = '' | & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $tab `
+    -Color 'none' -Dir $dir -Tool claude -Command $fake -NoUpdate -WtCommand $fakeWt 2>&1 | Out-String
+Ok ($out -match 'fake-claude --name "Listed name"') 'Enter on the name takes the display name from the project list'
+$env:TABSIGNAL_PROJECTS = Join-Path $dir 'missing.txt'
+$out = '' | & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $tab `
+    -Color 'none' -Dir $dir -Tool claude -Command $fake -NoUpdate -WtCommand $fakeWt 2>&1 | Out-String
+Ok ($out -match ('fake-claude --name ' + [regex]::Escape((Split-Path -Leaf $dir)))) 'Without a project list, Enter on the name takes the directory name'
+$env:TABSIGNAL_PROJECTS = ''
+
+# ------------------------------------------------- the daily update
+
+$stamps = Join-Path $dir 'stamps'
+function Invoke-Update([string[]]$Extra = @()) {
+    $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $tab, '-Name', 'session', '-Color', 'none',
+           '-Dir', $dir, '-Tool', 'copilot', '-Command', $fake, '-UpdateStampDir', $stamps, '-WtCommand', $fakeWt) + $Extra
+    return (& powershell.exe @a 2>&1 | Out-String)
+}
+$out = Invoke-Update
+Ok ($out -match 'fake-claude update') 'The first start runs the update'
+Ok (Test-Path -LiteralPath (Join-Path $stamps 'update-copilot.stamp')) 'The update time is recorded per tool'
+$out = Invoke-Update
+Ok ($out -notmatch 'fake-claude update') 'A second start the same day skips the update'
+$out = Invoke-Update @('-Update')
+Ok ($out -match 'fake-claude update') '-Update runs the update anyway'
+(Get-Item -LiteralPath (Join-Path $stamps 'update-copilot.stamp')).LastWriteTime = (Get-Date).AddDays(-2)
+$out = Invoke-Update @('-NoUpdate')
+Ok ($out -notmatch 'fake-claude update') '-NoUpdate skips an update that is due'
+$out = Invoke-Update
+Ok ($out -match 'fake-claude update') 'An update more than a day old is due again'
 Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
 
 # ------------------------------------------------- no marker files left behind

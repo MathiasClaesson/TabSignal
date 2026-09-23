@@ -1,17 +1,27 @@
-# tab - start a Claude Code session with a project directory, a session name and a tab color.
+# tab - start a Claude Code or GitHub Copilot session with a project directory, a session
+# name and a tab color.
 #
-#   tab                              project list -> name -> color
+#   tab                              project list -> name -> tool -> color
 #                                    (numbered lists; the color menu shows swatches)
-#   tab "Name"                       skips the name prompt (color derived from the name)
+#   tab "Name"                       skips the name prompt (color derived from the name);
+#                                    at the prompt, Enter gives the display name from
+#                                    projects.txt, or else the directory name
 #   tab "Name" -Color cyan           a chosen color  (see TabSignal.exe colors)
 #   tab "Name" -Color none           no tab color
 #   tab -Dir C:\proj                 skips the project list
 #   tab -NewTab                      open the session in a new tab instead
 #   tab -KeepTab                     with -NewTab: leave the tab you ran tab in open
-#   tab -Args "--resume"             extra arguments for claude (split on whitespace)
+#   tab -Tool copilot                skips the tool prompt (claude or copilot)
+#   tab -Update                      run `<tool> update` before starting, whenever it last ran
+#   tab -NoUpdate                    skip the daily update check
+#   tab -Args "--resume"             extra arguments for the tool (split on whitespace)
+#
+# The tool is updated (`claude update` / `copilot update`) at most once a day, just
+# before it starts; the time of the last run is kept per tool in
+# %LOCALAPPDATA%\TabSignal.
 #
 # Default: the session takes over the tab you are standing in - directory, title
-# and color are set there and claude starts. Nothing is opened and nothing is
+# and color are set there and the tool starts. Nothing is opened and nothing is
 # closed, so no window can be taken down by mistake. The title is the name followed
 # by the git branch, kept up to date by the hooks (Claude Code's own title is turned
 # off by install.ps1). The color is set with an escape sequence rather than
@@ -33,7 +43,10 @@ param(
     [string]$Color,
     [string]$Dir,
     [string]$Args = '',
-    [string]$Command = 'claude',
+    [ValidateSet('', 'claude', 'copilot')] [string]$Tool = '',
+    [string]$Command = '',
+    [switch]$Update,
+    [switch]$NoUpdate,
     # -Here is what the default does now; it is still accepted so that habits and
     # older shortcuts keep working.
     [switch]$Here,
@@ -47,7 +60,8 @@ param(
     # Test seams (see tests/Tab.Tests.ps1); the defaults are the real behavior.
     [string]$WtCommand = 'wt.exe',
     [int]$ReadyTimeoutSeconds = 15,
-    [string]$WindowId = ''
+    [string]$WindowId = '',
+    [string]$UpdateStampDir = (Join-Path $env:LOCALAPPDATA 'TabSignal')
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -64,14 +78,47 @@ function Quote-Arg([string]$s) {
     return '"' + $t + '"'
 }
 
-# Runs claude with the session name as a real argument. Building a command string
+# Runs the tool with the session name as a real argument (claude only; copilot has no --name). Building a command string
 # and calling Invoke-Expression would re-parse the name: $ would expand, and a ;
 # or $() in it would execute. -Args is split on whitespace, so an extra argument
 # containing spaces is not supported.
-function Start-Claude([string]$exeName, [string]$sessionName, [string]$extra) {
-    $a = @('--name', $sessionName)
+function Start-Tool([string]$toolName, [string]$exeName, [string]$sessionName, [string]$extra) {
+    $a = @()
+    if ($toolName -eq 'claude') { $a += @('--name', $sessionName) }
     if ($extra) { $a += @($extra -split '\s+' | Where-Object { $_ }) }
     & $exeName @a
+}
+
+function Update-Tool([string]$toolName, [string]$exeName) {
+    if ($NoUpdate) { return }
+    $stamp = Join-Path $UpdateStampDir "update-$toolName.stamp"
+    if (-not $Update -and (Test-Path -LiteralPath $stamp) -and (Get-Item -LiteralPath $stamp).LastWriteTime -gt (Get-Date).AddDays(-1)) { return }
+    Write-Host "Updating $toolName (once a day, -NoUpdate skips it) ..." -ForegroundColor DarkGray
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    & $exeName update
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    if ($code -ne 0) { Write-Warning "$toolName update failed ($code); trying again tomorrow." }
+    New-Item -ItemType Directory -Force $UpdateStampDir | Out-Null
+    [System.IO.File]::WriteAllText($stamp, (Get-Date -Format o))
+}
+
+function Select-Tool {
+    while ($true) {
+        $ans = (Read-Host 'Tool  1 claude  2 copilot [Enter = 1]').Trim()
+        if (-not $ans -or $ans -match '^(1|claude)$') { return 'claude' }
+        if ($ans -match '^(2|copilot)$') { return 'copilot' }
+    }
+}
+
+function Get-TabTitle([string]$sessionName, [string]$directory) {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $branch = "$(& $exe branch $directory 2>$null)".Trim()
+    $ErrorActionPreference = $prev
+    if ($branch) { return $sessionName + ' ' + [char]0x00B7 + ' ' + $branch }
+    return $sessionName
 }
 
 # Identifies the Windows Terminal window this shell lives in, as the process id of
@@ -200,7 +247,9 @@ function Select-Project {
 }
 
 if ($InTab) {
-    # --- Runs inside the new tab: color + claude ---
+    if (-not $Tool) { $Tool = 'claude' }
+    if (-not $Command) { $Command = $Tool }
+    # --- Runs inside the new tab: color + tool ---
     # Report in first of all: the launcher waits for this before closing its own tab.
     # Written to a temp file and moved into place, so the launcher never reads a
     # marker that exists but is still empty and concludes "another window".
@@ -214,7 +263,8 @@ if ($InTab) {
     Set-Location -LiteralPath $Dir
     & $exe cwd $Dir   # so that Duplicate tab opens in the same directory
     if (-not $Color -or $Color -eq 'auto') { & $exe color --for $Name } else { & $exe color $Color }
-    Start-Claude $Command $Name $Args
+    Update-Tool $Tool $Command
+    Start-Tool $Tool $Command $Name $Args
     return
 }
 
@@ -225,20 +275,28 @@ $Dir = (Resolve-Path -LiteralPath $Dir).Path
 # C:\ or \\server\, and an empty default would make the prompt below unanswerable.
 $segments = @($Dir -split '[:\\/]' | Where-Object { $_ })
 $default = if ($segments.Count) { $segments[-1] } else { 'claude' }
+if (Test-Path -LiteralPath $projectsFile) {
+    $listed = @(Get-Projects) | Where-Object { $_.Path.TrimEnd('\') -eq $Dir.TrimEnd('\') } | Select-Object -First 1
+    if ($listed) { $default = $listed.Label }
+}
 while (-not $Name) {
     $Name = (Read-Host "Session name [Enter = $default]").Trim()
     if (-not $Name) { $Name = $default }
 }
+if (-not $Tool) { $Tool = if ($Command) { 'claude' } else { Select-Tool } }
+if (-not $Command) { $Command = $Tool }
 if (-not $Color) { $Color = Select-Color $Name }
+$title = Get-TabTitle $Name $Dir
 
 if (-not $NewTab) {
-    # This tab: set the directory, the title and the color, then hand it to claude.
+    # This tab: set the directory, the title and the color, then hand it to the tool.
     # The title is the name (Claude Code's own title is disabled in settings.json).
     Set-Location -LiteralPath $Dir
     & $exe cwd $Dir
     if ($Color -eq 'auto') { & $exe color --for $Name } else { & $exe color $Color }
-    $host.UI.RawUI.WindowTitle = $Name
-    Start-Claude $Command $Name $Args
+    $host.UI.RawUI.WindowTitle = $title
+    Update-Tool $Tool $Command
+    Start-Tool $Tool $Command $Name $Args
     return
 }
 
@@ -252,11 +310,15 @@ $readyFile = Join-Path $readyDir ([Guid]::NewGuid().ToString('N'))
 
 $inner = @('-NoExit', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Quote-Arg $MyInvocation.MyCommand.Path),
            '-InTab', '-Name', (Quote-Arg $Name), '-Color', (Quote-Arg $Color), '-Dir', (Quote-Arg $Dir),
-           '-Command', (Quote-Arg $Command))
+           '-Tool', $Tool, '-Command', (Quote-Arg $Command))
+if ($Update) { $inner += '-Update' }
+if ($NoUpdate) { $inner += '-NoUpdate' }
 # Only ask the new tab to report back when we intend to act on it.
 if (-not $KeepTab) { $inner += @('-Ready', (Quote-Arg $readyFile)) }
 if ($Args) { $inner += @('-Args', (Quote-Arg $Args)) }
-$wt = @('-w', '0', 'new-tab', '-d', (Quote-Arg $Dir), '--title', (Quote-Arg $Name), 'powershell.exe') + $inner
+$wt = @('-w', '0', 'new-tab', '-d', (Quote-Arg $Dir), '--title', (Quote-Arg $title))
+if ($Tool -ne 'claude') { $wt += '--suppressApplicationTitle' }
+$wt = $wt + @('powershell.exe') + $inner
 # wt.exe treats ; as a command separator even inside quotes, so a session name or
 # path containing one would split the command line and the tab would never start.
 $wt = @($wt | ForEach-Object { $_ -replace ';', '\;' })
