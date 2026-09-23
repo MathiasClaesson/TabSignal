@@ -225,16 +225,17 @@ static class TabSignal
     // scheme (0-15) nor by Claude Code, which draws in truecolor, so the text inside
     // the tab is unaffected.
     internal const int TabSlot = 17;
+    // The colors of the Dark+ scheme that ships with Windows Terminal, unchanged.
+    // Windows Terminal picks the tab text (black or white) from the tab color, so
+    // the bright ones (yellow, cyan, green) get black text.
     internal static readonly string[][] Palette = {
-        new[] { "green",   "1c8047" },
-        new[] { "teal",    "0f8078" },
-        new[] { "blue",    "2a6fd6" },
-        new[] { "purple",  "8a55e0" },
-        new[] { "red",     "d13c4f" },
-        new[] { "orange",  "c7521a" },
-        new[] { "brown",   "a0662a" },
-        new[] { "magenta", "c9338f" },
-        new[] { "gray",    "626e82" },   // never picked automatically
+        new[] { "red",    "cd3131" },
+        new[] { "green",  "0dbc79" },
+        new[] { "yellow", "e5e510" },
+        new[] { "blue",   "2472c8" },
+        new[] { "purple", "bc3fbc" },
+        new[] { "cyan",   "11a8cd" },
+        new[] { "gray",   "666666" },   // Dark+ brightBlack; never picked automatically
     };
 
     internal static string Fold(string s) { return s.ToLowerInvariant(); }

@@ -3,7 +3,7 @@
 #   tab                              project list -> name -> color
 #                                    (numbered lists; the color menu shows swatches)
 #   tab "Name"                       skips the name prompt (color derived from the name)
-#   tab "Name" -Color teal           a chosen color  (see TabSignal.exe colors)
+#   tab "Name" -Color cyan           a chosen color  (see TabSignal.exe colors)
 #   tab "Name" -Color none           no tab color
 #   tab -Dir C:\proj                 skips the project list
 #   tab -NewTab                      open the session in a new tab instead

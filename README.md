@@ -121,7 +121,7 @@ session is running, since Claude Code writes to `~/.claude.json` itself.
 ```powershell
 tab                          # project list -> session name -> color
 tab "Name"                   # skips the name prompt
-tab "Name" -Color teal       # a chosen color
+tab "Name" -Color cyan       # a chosen color
 tab "Name" -Color none       # no tab color
 tab -Dir C:\proj             # skips the project list
 tab -NewTab                  # open the session in a new tab instead
@@ -175,9 +175,9 @@ control this:
 
 ### Colors
 
-`green` `#1c8047`, `teal` `#0f8078`, `blue` `#2a6fd6`, `purple` `#8a55e0`,
-`red` `#d13c4f`, `orange` `#c7521a`, `brown` `#a0662a`, `magenta` `#c9338f`,
-`gray` `#626e82` — or your own `#rrggbb`, or an xterm-256 index `0`–`255`.
+`red` `#cd3131`, `green` `#0dbc79`, `yellow` `#e5e510`, `blue` `#2472c8`,
+`purple` `#bc3fbc`, `cyan` `#11a8cd`, `gray` `#666666` — or your own `#rrggbb`, or an xterm-256 index
+`0`–`255`.
 
 In `tab` the color is picked from a numbered menu where each row shows its color
 as a swatch. `TabSignal.exe colors [--for <name>]` prints the palette as
@@ -185,19 +185,18 @@ as a swatch. `TabSignal.exe colors [--for <name>]` prints the palette as
 defined in exactly one place, `Palette` in `TabSignal.cs`. Edit it there and run
 `.\build.ps1`.
 
-The palette is bright and saturated, but every color keeps at least 4.5:1 contrast
-against the white tab text (WCAG AA) and stays below the brightness at which
-Windows Terminal would switch to black text; the tests enforce both. The active tab shows its color at full strength and therefore looks
-lighter than the inactive ones, but the ring is still visible. `gray` is never
-picked automatically, so it means "I chose this myself".
+The palette is the Dark+ color scheme that ships with Windows Terminal, unchanged.
+The active tab shows its color at full strength and therefore looks lighter than
+the inactive ones, but the ring is still visible. `gray` is never picked automatically, so it means "I chose this myself".
 
 Windows Terminal picks the tab text color itself: black if the tab color
 composited over the tab row is light, white otherwise. With Windows in light mode
 the tab row is light, so inactive tabs get black text while active and hovered
 ones get white. That is why `install.ps1` installs a dark theme of its own
-(`"theme": "TabSignal"`, tab row `#1c1c1c` both focused and unfocused); with the
-palette above the text is then white in every state. The theme only affects the
-window frame, not the terminal color scheme or Claude.
+(`"theme": "TabSignal"`, tab row `#1c1c1c` both focused and unfocused); the text
+then follows the tab color alone: white on the darker colors, black on the bright
+ones (yellow, cyan, green), just as Windows Terminal draws them.
+The theme only affects the window frame, not the terminal color scheme or Claude.
 
 `TabSignal.exe recolor` re-sends the color to every open Claude tab (the color last
 set, otherwise the one derived from the session name) — useful after editing the
@@ -273,7 +272,7 @@ harness can observe it. Those stay manual:
 TabSignal.exe set 3            # spinning ring
 TabSignal.exe set 1 100        # steady ring
 TabSignal.exe clear            # no ring
-TabSignal.exe color orange
+TabSignal.exe color yellow
 TabSignal.exe title "Test"     # tab title (ignored in tabs with a fixed title)
 ```
 
