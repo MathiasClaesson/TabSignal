@@ -175,9 +175,9 @@ control this:
 
 ### Colors
 
-`green` `#1f5c3a`, `teal` `#175a5f`, `blue` `#1f4a80`, `purple` `#4a3582`,
-`red` `#7a2530`, `orange` `#8a3e14`, `brown` `#5e4520`, `magenta` `#7a2a5c`,
-`gray` `#3a4250` — or your own `#rrggbb`, or an xterm-256 index `0`–`255`.
+`green` `#1c8047`, `teal` `#0f8078`, `blue` `#2a6fd6`, `purple` `#8a55e0`,
+`red` `#d13c4f`, `orange` `#c7521a`, `brown` `#a0662a`, `magenta` `#c9338f`,
+`gray` `#626e82` — or your own `#rrggbb`, or an xterm-256 index `0`–`255`.
 
 In `tab` the color is picked from a numbered menu where each row shows its color
 as a swatch. `TabSignal.exe colors [--for <name>]` prints the palette as
@@ -185,8 +185,9 @@ as a swatch. `TabSignal.exe colors [--for <name>]` prints the palette as
 defined in exactly one place, `Palette` in `TabSignal.cs`. Edit it there and run
 `.\build.ps1`.
 
-The palette is deliberately dark and quiet (at least 7.5:1 contrast against white
-tab text). The active tab shows its color at full strength and therefore looks
+The palette is bright and saturated, but every color keeps at least 4.5:1 contrast
+against the white tab text (WCAG AA) and stays below the brightness at which
+Windows Terminal would switch to black text; the tests enforce both. The active tab shows its color at full strength and therefore looks
 lighter than the inactive ones, but the ring is still visible. `gray` is never
 picked automatically, so it means "I chose this myself".
 

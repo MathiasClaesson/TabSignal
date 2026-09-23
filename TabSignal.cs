@@ -226,15 +226,15 @@ static class TabSignal
     // the tab is unaffected.
     internal const int TabSlot = 17;
     internal static readonly string[][] Palette = {
-        new[] { "green",   "1f5c3a" },
-        new[] { "teal",    "175a5f" },
-        new[] { "blue",    "1f4a80" },
-        new[] { "purple",  "4a3582" },
-        new[] { "red",     "7a2530" },
-        new[] { "orange",  "8a3e14" },
-        new[] { "brown",   "5e4520" },
-        new[] { "magenta", "7a2a5c" },
-        new[] { "gray",    "3a4250" },   // never picked automatically
+        new[] { "green",   "1c8047" },
+        new[] { "teal",    "0f8078" },
+        new[] { "blue",    "2a6fd6" },
+        new[] { "purple",  "8a55e0" },
+        new[] { "red",     "d13c4f" },
+        new[] { "orange",  "c7521a" },
+        new[] { "brown",   "a0662a" },
+        new[] { "magenta", "c9338f" },
+        new[] { "gray",    "626e82" },   // never picked automatically
     };
 
     internal static string Fold(string s) { return s.ToLowerInvariant(); }
